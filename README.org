@@ -1,0 +1,142 @@
+#+TITLE: Org Focus HUD: Distraction-Free Monotasking Cockpit
+#+AUTHOR: SSD2019
+#+LANGUAGE: en
+
+[[https://github.com/SSD2019/org-focus-hud][https://img.shields.io/badge/org--focus--hud-v1.0.0-blue.svg]]
+[[https://www.gnu.org/licenses/gpl-3.0][https://img.shields.io/badge/License-GPLv3-blue.svg]]
+
+* 🎯 Org Focus HUD
+
+*Org Focus HUD* is a distraction-free, monotasking execution cockpit for GNU Emacs [[https://orgmode.org/][Org-mode]].
+
+It locks your attention exclusively onto your *single currently active or scheduled task*, hiding the rest of your agenda and backlog to eliminate context switching, decision fatigue, and schedule drift.
+
+#+begin_example
+╭─────────────────────────────────────────────────────────────────────────────╮
+│ 🎯 FOCUS: Implement OAuth 2.0 PKCE Authorization Flow  [14:22 · Tue Sep 29] │
+╰─────────────────────────────────────────────────────────────────────────────╯
+
+  PROJECT:  backend-services / authentication-gateway
+  SLOT:     14:00 – 15:30 (Today) · Effort: 90m · Pacing: ⏱️ POMO 1/2 [22:15]
+
+  TIME REMAINING: 1h 08m left (68m)  [ON PACE]
+  [██████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 22m clocked (24%)
+
+  ┌─ CHECKLIST [2/4] ─────────────────────────────────────────────────────────┐
+  │ [X] Generate PKCE code verifier and challenge (base64url)                 │
+  │   • RFC 7636 Section 4.3 plain text notes and specifications             │
+  │   [X] Add redirect URL validation with state token                        │
+  │ [ ] Handle error callback when state parameter is invalid                 │
+  │   • Check query parameter error_description                               │
+  │   [ ] Write unit tests for expired state token and replay attacks         │
+  └───────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ SUBTASKS (CHILD TODOS) ──────────────────────────────────────────────────┐
+  │ • [TODO] Implement token exchange endpoint POST /oauth/token              │
+  │ • [TODO] Store refresh tokens securely in redis cache                     │
+  └───────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ RECENT NOTES ────────────────────────────────────────────────────────────┐
+  │ [14:18] Remember to use constant-time comparison for token hashes         │
+  │ [14:05] RFC 7636 Section 4.3 requires SHA-256 for code_challenge_method   │
+  └───────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ WORK LOG [4] (Press 'l' to log) ─────────────────────────────────────────┐
+  │ [2026-09-29 Tue 14:30] Completed token endpoint unit tests                │
+  │ [2026-09-29 Tue 14:15] Fixed PKCE verification edge case                  │
+  │ [2026-09-29 Tue 13:50] Integrated redis token cache                       │
+  │ [2026-09-29 Tue 13:30] Started OAuth proxy implementation                 │
+  │ (Scroll: [ / ])                                                           │
+  └───────────────────────────────────────────────────────────────────────────┘
+
+  [?] Shortcuts help  ·  [l] Log  ·  [r] Refresh  ·  [q] Minimize
+#+end_example
+
+Press =?= at any time inside the cockpit to view shortcuts:
+#+begin_example
+  CAPTURE (Zero context switching)   ACTIONS & PACING
+  ─────────────────────────────────  ──────────────────────────────────────────
+  [k] + Checklist / bullet item      [RET] Toggle item [ ] ↔ [X]
+  [M-j] / [M-k] Move item down / up  [r]   Refresh node details
+  [M-h] / [M-l] Outdent / Indent     [d]   Mark DONE & Advance
+  [l] + Log Work Done ([timestamp])  [w]   Wait on this & Advance
+  [n] + Quick Note                   [+]   Extend effort (+15m)
+  [s] + Child Subtask                [p]   Pause / Resume Clock
+  [a] + Sibling Task (after this)    [q]   Minimize HUD
+  [[] / []] Scroll Work Log          [?]   Hide shortcuts help
+  [o] Open in Other Window           [O]   Jump to Org File
+#+end_example
+
+* 🚀 Key Features
+
+- *Distraction-Free Monotasking*: Eliminates future task clutter, showing only the task you should be working on right now.
+- *Real-Time Pacing & Visual Progress*: Live progress bar comparing clocked elapsed time against estimated effort, with automatic overrun warnings.
+- *Hierarchical Checklist Management*: Full in-cockpit checklist viewer and editor supporting nested checklists and plain bullets.
+- *Option 2a Surgical Item Reordering*: Move checklist items up or down with =M-k= / =M-j= across intervening body paragraphs, source code blocks, and diagrams without disturbing non-list text.
+- *Contextual Item Insertion*: Press =k= on any list item to insert a new item directly beneath it inheriting indentation, or press =k= anywhere else to append to the end of lists.
+- *In-Cockpit Capture*: Log work done with inactive timestamps (=l=), capture quick notes (=n=), create child subtasks (=s=), or queue sibling tasks (=a=) without losing flow.
+- *Evil / Spacemacs Compatible*: Single-key shortcuts work out of the box in Evil normal and motion states.
+- *Zero Hard Dependencies*: Works out of the box with vanilla Org mode using standard =org-clock= and =:Effort:= properties.
+- *First-Class Scheduler Integration*: Seamlessly integrates with [[https://github.com/SSD2019/org-auto-scheduler][org-auto-scheduler]] for dynamic repacking, automatic advance to next scheduled tasks, and calendar sync.
+
+* ⌨️ Keybindings Reference
+
+| Key | Action | Description |
+|-----+--------+-------------|
+| =TAB= / =S-TAB= | Next/Prev Checklist | Navigate directly between checklist items in the HUD |
+| =k= | Add Checklist / Bullet | Contextual addition: inserts below cursor item matching indentation; if not on item, appends at end of lists across body |
+| =RET= | Toggle Checklist | Toggle checkbox =[ ]= ↔ =[X]=, or convert plain bullet to =[ ]= |
+| =M-k= / =M-<up>= | Move Item Up | Surgically swap item block with predecessor across intervening body text/images |
+| =M-j= / =M-<down>= | Move Item Down | Surgically swap item block with successor across intervening body text/images |
+| =M-h= / =M-<left>= | Outdent Item | Promote item block (-2 spaces), preserving relative child indentation |
+| =M-l= / =M-<right>= | Indent Item | Demote item block (+2 spaces), preserving relative child indentation |
+| =r= / =g= | Refresh Node Details | Refresh HUD from underlying Org buffer (updates effort, time, bullets) |
+| =l= | Log Work Done | Prompt for work done and append =- [YYYY-MM-DD Day HH:MM] <work>= under =:LOGBOOK:= |
+| =[= / =]= | Scroll Work Log | Scroll visible window in the fixed-size Work Log section (older / newer) |
+| =n= | Add Note | Prompt for note and append timestamped entry in drawer |
+| =s= | Add Subtask | Create child headline =** TODO <title>= with optional effort |
+| =a= | Add Sibling | Create sibling task =* TODO <title>= queued directly after current task |
+| =d= | Mark DONE & Advance | Mark task =DONE=, clock out, and auto-clock into the next scheduled task |
+| =w= | Wait on This & Advance | Prompt for note & tickler date, move to =WAITING=, and advance |
+| =+= / === | Extend (+15m) | Extend current task effort; triggers repacking when scheduler is loaded |
+| =p= | Pause / Resume | Toggle =org-clock-out= / =org-clock-in= |
+| =o= | Jump to Org (Other Window) | Reveal headline in original Org buffer in other window |
+| =O= | Jump to Org (Same Window) | Reveal headline in original Org buffer in current window |
+| =c= | Clock in Task | Select and clock into any scheduled task for today |
+| =?= | Toggle Shortcuts Legend | Toggle the in-cockpit shortcuts legend on/off |
+| =q= | Minimize | Dismiss Focus HUD window (clock remains running) |
+
+* 📦 Installation
+
+** Straight.el
+#+begin_src emacs-lisp
+(straight-use-package
+ '(org-focus-hud :type git :host github :repo "SSD2019/org-focus-hud"))
+#+end_src
+
+** Manual
+Clone the repository and add it to your load-path:
+#+begin_src emacs-lisp
+(add-to-list 'load-path "~/.emacs.d/plugins/org-focus-hud")
+(require 'org-focus-hud)
+#+end_src
+
+** Use-Package
+#+begin_src emacs-lisp
+(use-package org-focus-hud
+  :bind ("C-c f" . org-focus-hud)
+  :config
+  ;; Optional: Customize refresh interval in seconds
+  (setq org-focus-hud-refresh-interval 15))
+#+end_src
+
+* 🔗 Integration with Org Auto Scheduler
+
+If you use [[https://github.com/SSD2019/org-auto-scheduler][org-auto-scheduler]], Focus HUD automatically hooks into the scheduler:
+- Pressing =+= ripples and repacks downstream schedule slots.
+- Pressing =d= or =w= automatically advances and clocks into the next auto-scheduled task for today.
+- Pressing =c= provides a completion list of today's scheduled slots.
+
+* 📄 License
+
+GPLv3. See [[file:LICENSE][LICENSE]] for details.
