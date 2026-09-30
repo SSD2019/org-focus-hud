@@ -103,6 +103,7 @@ Press =?= at any time inside the cockpit to view shortcuts:
 | =o= | Jump to Org (Other Window) | Reveal headline in original Org buffer in other window |
 | =O= | Jump to Org (Same Window) | Reveal headline in original Org buffer in current window |
 | =c= | Clock in Task | Select and clock into any scheduled task for today |
+| =z= | Toggle Compact Mode | Toggle between compact (0 blank lines) and spacious (1 blank line) HUD layouts |
 | =?= | Toggle Shortcuts Legend | Toggle the in-cockpit shortcuts legend on/off |
 | =q= | Minimize | Dismiss Focus HUD window (clock remains running) |
 

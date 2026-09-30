@@ -286,6 +286,26 @@ Defaults to nil (hidden until `?' is toggled)."
   :type 'integer
   :group 'org-focus-hud)
 
+(defcustom org-focus-hud-compact t
+  "When non-nil, render Focus HUD in compact mode with reduced whitespace.
+Eliminates blank lines between sections and avoids padding empty rows."
+  :type 'boolean
+  :group 'org-focus-hud)
+
+(defcustom org-focus-hud-section-spacing 0
+  "Number of blank lines between sections in the Focus HUD cockpit.
+0 means compact (no empty line between sections).
+1 means spacious (one empty line between sections)."
+  :type 'integer
+  :group 'org-focus-hud)
+
+(defun org-focus-hud--section-sep ()
+  "Return newline string separator between sections based on spacing settings."
+  (let ((spacing (if org-focus-hud-compact
+                     (or org-focus-hud-section-spacing 0)
+                   (max 1 (or org-focus-hud-section-spacing 1)))))
+    (make-string (1+ (max 0 spacing)) ?\n)))
+
 (defvar-local org-focus-hud--log-offset 0
   "Buffer-local scroll offset for the fixed-size Work Log section in Focus HUD.
 0 means showing the most recent entries.")
@@ -391,7 +411,8 @@ Each item is a plist (:pos POS :state STATE :title TITLE)."
       (nreverse items))))
 
 (defun org-focus-hud--get-notes (marker)
-  "Return a list of up to 4 recent timestamped notes for task at MARKER."
+  "Return up to 4 recent notes for task at MARKER.
+Extracts quick notes from the task body and :LOGBOOK: drawer captured via `n`."
   (org-with-point-at marker
     (org-back-to-heading t)
     (let* ((notes '())
@@ -406,9 +427,10 @@ Each item is a plist (:pos POS :state STATE :title TITLE)."
       (save-excursion
         (goto-char (marker-position marker))
         (org-back-to-heading t)
-        (while (re-search-forward "^[ \t]*- \\(?:Note taken on \\)?\\[\\([0-9][^]]*\\)\\]\\(?: \\\\\\\\\\n[ \t]*\\)?\\(.*\\)$" body-end t)
-          (let* ((ts (match-string-no-properties 1))
-                 (body (match-string-no-properties 2))
+        ;; Only match Org "Note taken on [...]" or short-time quick notes "[HH:MM]":
+        (while (re-search-forward "^[ \t]*- \\(?:Note taken on \\[\\([0-9][^]]*\\)\\]\\|\\[\\([0-9]\\{2\\}:[0-9]\\{2\\}\\)\\]\\)\\(?: \\\\\\\\n[ \t]*\\)?\\(.*\\)$" body-end t)
+          (let* ((ts (or (match-string-no-properties 1) (match-string-no-properties 2)))
+                 (body (match-string-no-properties 3))
                  (short-ts (if (string-match "\\([0-9]\\{2\\}:[0-9]\\{2\\}\\)" ts)
                                (match-string 1 ts)
                              ts))
@@ -417,11 +439,11 @@ Each item is a plist (:pos POS :state STATE :title TITLE)."
               (push (format "[%s] %s" short-ts note-text) notes)))))
       (save-excursion
         (goto-char meta-end)
-        (while (re-search-forward "^[ \t]*- \\(\\[[0-9]\\{2\\}:[0-9]\\{2\\}\\]\\)[ \t]+\\(.*\\)$" body-end t)
+        (while (re-search-forward "^[ \t]*- \\[\\([0-9]\\{2\\}:[0-9]\\{2\\}\\)\\][ \t]+\\(.*\\)$" body-end t)
           (let ((ts (match-string-no-properties 1))
                 (text (match-string-no-properties 2)))
-            (unless (member (format "%s %s" ts text) notes)
-              (push (format "%s %s" ts text) notes)))))
+            (unless (member (format "[%s] %s" ts text) notes)
+              (push (format "[%s] %s" ts text) notes)))))
       (let ((res (nreverse notes)))
         (if (> (length res) 4)
             (last res 4)
@@ -433,7 +455,6 @@ Extracts items from the task's :LOGBOOK: drawer and body:
 - Inactive timestamp logs: - [YYYY-MM-DD Day HH:MM] ...
 - Clock notes: - Note taken on [...] \\ ...
 - State transitions: - State \"...\" from \"...\" [...]
-- Short timestamp notes: - [HH:MM] ...
 Each item is a plist (:ts TIMESTAMP :text TEXT :formatted STR)."
   (org-with-point-at marker
     (org-back-to-heading t)
@@ -445,8 +466,8 @@ Each item is a plist (:ts TIMESTAMP :text TEXT :formatted STR)."
       (save-excursion
         (goto-char (marker-position marker))
         (org-back-to-heading t)
-        ;; Scan for standard inactive timestamp logs and notes:
-        (while (re-search-forward "^[ \t]*- \\(?:Note taken on \\)?\\(\\[[0-9][^]]*\\]\\)\\(?: \\\\\\\\\\n[ \t]*\\)?\\(.*\\)$" body-end t)
+        ;; Scan for inactive timestamp logs with dates [YYYY-MM-DD ...] or Note taken:
+        (while (re-search-forward "^[ \t]*- \\(?:Note taken on \\)?\\(\\[[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}[^]]*\\]\\)\\(?: \\\\\\\\n[ \t]*\\)?\\(.*\\)$" body-end t)
           (let* ((ts (match-string-no-properties 1))
                  (body (match-string-no-properties 2))
                  (log-text (string-trim body)))
@@ -588,7 +609,7 @@ Returns a plist with task details or nil if no active task found."
       (insert "│ "
               (propertize trunc-title 'face (if is-overrun 'org-focus-hud-overrun-face 'org-focus-hud-header-face))
               pad " [" time-str "] │\n"))
-    (insert "╰" (make-string 77 ?─) "╯\n\n")
+    (insert "╰" (make-string 77 ?─) "╯" (org-focus-hud--section-sep))
 
     ;; 2. Metadata Lines
     (insert "  " (propertize "PROJECT:" 'face 'bold) "  " parent "\n")
@@ -612,7 +633,7 @@ Returns a plist with task details or nil if no active task found."
               (if pomo
                   (format " · Pomodoro: 🍅 [%dm/%dm]" (plist-get pomo :work) (plist-get pomo :break))
                 "")
-              "\n\n"))
+              (org-focus-hud--section-sep)))
 
     ;; 3. Progress Bar & Pacing
     (let* ((bar-str (concat
@@ -641,7 +662,7 @@ Returns a plist with task details or nil if no active task found."
                           (propertize "[PAUSED / NOT CLOCKED]" 'face 'org-focus-hud-overrun-face))
                 "")
               "\n")
-      (insert "  " bar-str (format " %dm clocked (%d%%)\n\n" clocked pct)))
+      (insert "  " bar-str (format " %dm clocked (%d%%)" clocked pct) (org-focus-hud--section-sep)))
 
     ;; 4. Checklist & Outline Bullets Box
     (let* ((items (plist-get task-info :checklists))
@@ -703,7 +724,7 @@ Returns a plist with task details or nil if no active task found."
                                            "RET to toggle checklist item [ ] ↔ [X]"
                                          "RET to add checkbox [ ] to bullet"))))
             (insert line-str))))
-      (insert "  " (propertize (concat "└" (make-string 76 ?─) "┘") 'face 'org-focus-hud-box-face) "\n\n"))
+      (insert "  " (propertize (concat "└" (make-string 76 ?─) "┘") 'face 'org-focus-hud-box-face) (org-focus-hud--section-sep)))
 
     ;; 5. Subtasks Box
     (let ((subtasks (plist-get task-info :subtasks)))
@@ -728,7 +749,7 @@ Returns a plist with task details or nil if no active task found."
                       padding
                       (propertize "│" 'face 'org-focus-hud-box-face)
                       "\n")))
-          (insert "  " (propertize (concat "└" (make-string 76 ?─) "┘") 'face 'org-focus-hud-box-face) "\n\n"))))
+          (insert "  " (propertize (concat "└" (make-string 76 ?─) "┘") 'face 'org-focus-hud-box-face) (org-focus-hud--section-sep)))))
 
     ;; 6. Recent Notes Box (Quick notes from 'n')
     (let ((notes (plist-get task-info :notes)))
@@ -746,7 +767,7 @@ Returns a plist with task details or nil if no active task found."
                       trunc padding
                       (propertize "│" 'face 'org-focus-hud-box-face)
                       "\n")))
-          (insert "  " (propertize (concat "└" (make-string 76 ?─) "┘") 'face 'org-focus-hud-box-face) "\n\n"))))
+          (insert "  " (propertize (concat "└" (make-string 76 ?─) "┘") 'face 'org-focus-hud-box-face) (org-focus-hud--section-sep)))))
 
     ;; 7. Work Log Box (Fixed size scrollable, captured via 'l')
     (let* ((logs (plist-get task-info :logs))
@@ -780,10 +801,11 @@ Returns a plist with task details or nil if no active task found."
               (insert "  " (propertize msg 'face 'org-focus-hud-box-face)
                       pad
                       (propertize "│" 'face 'org-focus-hud-box-face) "\n"))
-            (dotimes (_ (1- h))
-              (insert "  " (propertize "│" 'face 'org-focus-hud-box-face)
-                      (make-string 76 ?\s)
-                      (propertize "│" 'face 'org-focus-hud-box-face) "\n")))
+            (unless org-focus-hud-compact
+              (dotimes (_ (1- h))
+                (insert "  " (propertize "│" 'face 'org-focus-hud-box-face)
+                        (make-string 76 ?\s)
+                        (propertize "│" 'face 'org-focus-hud-box-face) "\n"))))
         ;; Render visible window of log entries
         (dolist (item visible-logs)
           (let* ((item-str (if (listp item)
@@ -804,11 +826,12 @@ Returns a plist with task details or nil if no active task found."
                     (propertize "│" 'face 'org-focus-hud-box-face)
                     "\n")))
         ;; Fill remaining lines if visible-logs < h
-        (dotimes (_ (- h (length visible-logs)))
-          (insert "  " (propertize "│" 'face 'org-focus-hud-box-face)
-                  (make-string 76 ?\s)
-                  (propertize "│" 'face 'org-focus-hud-box-face) "\n")))
-      (insert "  " (propertize (concat "└" (make-string 76 ?─) "┘") 'face 'org-focus-hud-box-face) "\n\n"))
+        (unless org-focus-hud-compact
+          (dotimes (_ (- h (length visible-logs)))
+            (insert "  " (propertize "│" 'face 'org-focus-hud-box-face)
+                    (make-string 76 ?\s)
+                    (propertize "│" 'face 'org-focus-hud-box-face) "\n"))))
+      (insert "  " (propertize (concat "└" (make-string 76 ?─) "┘") 'face 'org-focus-hud-box-face) (org-focus-hud--section-sep)))
 
     ;; 8. Keybindings Footer Table (toggled with '?')
     (if org-focus-hud--show-help
@@ -848,6 +871,9 @@ Returns a plist with task details or nil if no active task found."
       (insert "  " (propertize "[?]" 'face 'org-focus-hud-key-face)
               " " (propertize "Shortcuts help" 'face 'shadow)
               "  ·  "
+              (propertize "[z]" 'face 'org-focus-hud-key-face)
+              " " (propertize (if org-focus-hud-compact "Spacious" "Compact") 'face 'shadow)
+              "  ·  "
               (propertize "[l]" 'face 'org-focus-hud-key-face)
               " " (propertize "Log" 'face 'shadow)
               "  ·  "
@@ -865,8 +891,8 @@ Returns a plist with task details or nil if no active task found."
     (insert "│ ⏸️  ORG FOCUS HUD STANDBY"
             (make-string (max 0 (- 77 27 (length time-str))) ?\s)
             "[" time-str "] │\n")
-    (insert "╰" (make-string 77 ?─) "╯\n\n")
-    (insert "  NO ACTIVE OR SCHEDULED TASK DETECTED RIGHT NOW.\n\n")
+    (insert "╰" (make-string 77 ?─) "╯" (org-focus-hud--section-sep))
+    (insert "  NO ACTIVE OR SCHEDULED TASK DETECTED RIGHT NOW." (org-focus-hud--section-sep))
     (insert "  " (propertize "ACTIONS:" 'face 'org-focus-hud-section-face) "\n")
     (insert "  " (propertize (make-string 75 ?─) 'face 'org-focus-hud-box-face) "\n")
     (insert (format "  %s  Clock into a task from today's agenda\n"
@@ -1591,6 +1617,14 @@ Clocks out of current task and auto-advances/clocks into the next scheduled task
       (org-focus-hud-refresh)
       (message "Clock RESUMED."))))
 
+(defun org-focus-hud-toggle-compact ()
+  "Toggle between compact layout and spacious layout in Focus HUD."
+  (interactive)
+  (setq org-focus-hud-compact (not org-focus-hud-compact))
+  (setq org-focus-hud-section-spacing (if org-focus-hud-compact 0 1))
+  (org-focus-hud-refresh)
+  (message "Focus HUD compact mode: %s" (if org-focus-hud-compact "ON (0 blank lines)" "OFF (spacious)")))
+
 (defun org-focus-hud-toggle-help ()
   "Toggle visibility of the shortkey legend in the Focus HUD."
   (interactive)
@@ -1674,6 +1708,7 @@ Clocks out of current task and auto-advances/clocks into the next scheduled task
     (define-key map (kbd "O") #'org-focus-hud-goto-task)
     (define-key map (kbd "c") #'org-focus-hud-clock-in-task)
     (define-key map (kbd "r") #'org-focus-hud-refresh)
+    (define-key map (kbd "z") #'org-focus-hud-toggle-compact)
     (define-key map (kbd "l") #'org-focus-hud-log-work)
     (define-key map (kbd "[") #'org-focus-hud-log-scroll-up)
     (define-key map (kbd "]") #'org-focus-hud-log-scroll-down)
@@ -1693,6 +1728,7 @@ Clocks out of current task and auto-advances/clocks into the next scheduled task
 (define-key org-focus-hud-mode-map (kbd "O") #'org-focus-hud-goto-task)
 (define-key org-focus-hud-mode-map (kbd "?") #'org-focus-hud-toggle-help)
 (define-key org-focus-hud-mode-map (kbd "r") #'org-focus-hud-refresh)
+(define-key org-focus-hud-mode-map (kbd "z") #'org-focus-hud-toggle-compact)
 (define-key org-focus-hud-mode-map (kbd "g") #'org-focus-hud-refresh)
 (define-key org-focus-hud-mode-map (kbd "l") #'org-focus-hud-log-work)
 (define-key org-focus-hud-mode-map (kbd "[") #'org-focus-hud-log-scroll-up)

@@ -587,7 +587,7 @@
     (when (file-exists-p temp-file) (delete-file temp-file))))
 
 (if (= test-failures 0)
-    (message "ALL 22 TEST SUITES PASSED PERFECTLY!")
+    (message "ALL 23 TEST SUITES PASSED PERFECTLY!")
   (message "FAILURES DETECTED: %d" test-failures))
 (message "==============================================")
 
@@ -627,6 +627,66 @@
               (org-with-point-at m
                 (assert-equal (org-entry-get nil "Effort") "2:00"
                               "Test 5.3: :Effort: property in org file updated to 2:00"))))))
+    (when (buffer-live-p hud-buf) (kill-buffer hud-buf))
+    (when (buffer-live-p buf) (kill-buffer buf))
+    (when (file-exists-p temp-file) (delete-file temp-file))))
+
+;;; ============================================================================
+;;; TEST 23: Compact Layout, Whitespace Reduction & Toggle ("z")
+;;; ============================================================================
+(message "\n--- TEST 23: Compact Layout, Whitespace Reduction & Toggle (\"z\") ---")
+
+(let* ((temp-file (make-temp-file "test-compact-" nil ".org"))
+       (buf (find-file-noselect temp-file))
+       (hud-buf (get-buffer-create "*Org Focus HUD*")))
+  (unwind-protect
+      (with-current-buffer buf
+        (org-mode)
+        (insert "* TODO Compact Layout Test Task\n:PROPERTIES:\n:Effort: 1:00\n:END:\n  - [X] Step 1\n  - [ ] Step 2\n")
+        (save-buffer)
+        (let ((m (progn (goto-char (point-min)) (point-marker))))
+          (with-current-buffer hud-buf
+            (org-focus-hud-mode)
+            (setq org-focus-hud--target-marker m)
+            (setq org-focus-hud-compact t)
+            (setq org-focus-hud-section-spacing 0)
+            (org-focus-hud-refresh)
+
+            ;; 23.1 Keybinding
+            (assert-equal (lookup-key org-focus-hud-mode-map (kbd "z"))
+                          #'org-focus-hud-toggle-compact
+                          "Test 23.1: 'z' key bound to org-focus-hud-toggle-compact")
+
+            ;; 23.2 Compact mode eliminates blank lines between sections
+            (let ((str (buffer-string)))
+              (assert-true (string-match-p "╰[─]+╯\n  PROJECT:" str)
+                           "Test 23.2: Header box directly followed by PROJECT without empty line")
+              (assert-true (string-match-p "└[─]+┘\n  ┌─ WORK LOG" str)
+                           "Test 23.2: Checklist box directly followed by Work Log box without empty line")
+              (assert-true (string-match-p (concat "└[─]+┘\n  " (regexp-quote "[?] Shortcuts")) str)
+                           "Test 23.2: Work Log box directly followed by footer shortcuts without empty line")
+              ;; Work log has 0 entries; in compact mode it should NOT pad with 4 empty lines
+              (assert-true (not (string-match-p "│[ ]{76}│" str))
+                           "Test 23.2: Work log does not pad empty rows in compact mode"))
+
+            ;; 23.3 Toggle to spacious mode via 'z'
+            (org-focus-hud-toggle-compact)
+            (assert-equal org-focus-hud-compact nil
+                          "Test 23.3: Compact mode disabled after toggle")
+            (assert-equal org-focus-hud-section-spacing 1
+                          "Test 23.3: Section spacing set to 1 after toggle")
+            (let ((spacious-str (buffer-string)))
+              (assert-true (string-match-p "╰[─]+╯\n\n  PROJECT:" spacious-str)
+                           "Test 23.3: Header box separated by blank line in spacious mode")
+              (assert-true (string-match-p "└[─]+┘\n\n  ┌─ WORK LOG" spacious-str)
+                           "Test 23.3: Checklist box separated by blank line in spacious mode"))
+
+            ;; 23.4 Toggle back to compact mode
+            (org-focus-hud-toggle-compact)
+            (assert-equal org-focus-hud-compact t
+                          "Test 23.4: Compact mode restored after second toggle")
+            (assert-equal org-focus-hud-section-spacing 0
+                          "Test 23.4: Section spacing restored to 0 after second toggle"))))
     (when (buffer-live-p hud-buf) (kill-buffer hud-buf))
     (when (buffer-live-p buf) (kill-buffer buf))
     (when (file-exists-p temp-file) (delete-file temp-file))))
