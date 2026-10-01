@@ -691,6 +691,139 @@
     (when (buffer-live-p buf) (kill-buffer buf))
     (when (file-exists-p temp-file) (delete-file temp-file))))
 
+;;; ============================================================================
+;;; TEST 24: Robust Checklist Addition with Drawers (:LOGBOOK: & :PROPERTIES:)
+;;; ============================================================================
+(message "\n--- TEST 24: Robust Checklist Addition with Drawers (:LOGBOOK: & :PROPERTIES:) ---")
+
+(let* ((temp-file (make-temp-file "test-checklist-drawers-" nil ".org"))
+       (buf (find-file-noselect temp-file))
+       (hud-buf (get-buffer-create "*Org Focus HUD*")))
+  (unwind-protect
+      (with-current-buffer buf
+        (org-mode)
+        (insert "* IN-PROGRESS Cleanup of all tasks [1/1]
+SCHEDULED: <2026-10-06 Tue 15:40-15:50>
+:PROPERTIES:
+:Effort:   0:15
+:toggl-project: planning ahead
+:ID:       10ccdf54-a44b-4398-832d-9867dc3fbb0a
+:END:
+:LOGBOOK:
+CLOCK: [2026-10-01 Thu 15:20]--[2026-10-01 Thu 15:46] =>  0:26
+- State \"DONE\"       from \"IN-PROGRESS\" [2026-10-01 Thu 15:46]
+- State \"DROPPED\"    from \"IN-PROGRESS\" [2024-12-22 Sun 21:43]
+CLOCK: [2024-10-23 Wed 09:47]--[2024-10-23 Wed 09:48] =>  0:01
+:END:
+[[./write/improv/taskoverview.svg]] 
+
+- [X] life.org
+* Next Task
+")
+        (save-buffer)
+        (let ((m (progn (goto-char (point-min)) (point-marker))))
+          (with-current-buffer hud-buf
+            (org-focus-hud-mode)
+            (setq org-focus-hud--target-marker m)
+            (org-focus-hud-refresh)
+
+            ;; 24.1 Add checklist item when cursor is on life.org
+            (goto-char (point-min))
+            (search-forward "life.org")
+            (beginning-of-line)
+            (assert-true (get-text-property (point) 'focus-check-pos)
+                         "Test 24.1: Cursor on life.org has focus-check-pos")
+            (org-focus-hud-add-checklist "study.org")
+            (assert-true (looking-at ".*study.org")
+                         "Test 24.1: Cursor anchored on newly added study.org"))
+
+          (with-current-buffer buf
+            (let ((content (buffer-string)))
+              (let ((pos-log (string-match ":LOGBOOK:" content))
+                    (pos-end (string-match ":END:" content (string-match ":LOGBOOK:" content)))
+                    (pos-life (string-match "- \\[X\\] life.org" content))
+                    (pos-study (string-match "- \\[ \\] study.org" content)))
+                ;; Verify study.org is placed AFTER life.org, not inside LOGBOOK
+                (assert-true (< pos-log pos-end) "Test 24.1: LOGBOOK and its :END: exist")
+                (assert-true (< pos-end pos-life) "Test 24.1: :END: precedes life.org")
+                (assert-true (< pos-life pos-study) "Test 24.1: study.org placed AFTER life.org")
+                ;; Verify :LOGBOOK: drawer was not corrupted
+                (assert-true (string-match "- State \"DONE\"" content) "Test 24.1: State DONE log intact")
+                (assert-true (string-match "- State \"DROPPED\"" content) "Test 24.1: State DROPPED log intact"))))
+
+          ;; 24.2 Add checklist item when cursor is NOT on a checklist item (point-min)
+          (with-current-buffer hud-buf
+            (goto-char (point-min))
+            (assert-equal (get-text-property (point) 'focus-check-pos) nil
+                          "Test 24.2: Point-min has no focus-check-pos")
+            (org-focus-hud-add-checklist "work.org")
+            (assert-true (looking-at ".*work.org")
+                         "Test 24.2: Cursor anchored on work.org after append at point-min"))
+
+          (with-current-buffer buf
+            (let ((content (buffer-string)))
+              (let ((pos-study (string-match "- \\[ \\] study.org" content))
+                    (pos-work (string-match "- \\[ \\] work.org" content)))
+                (assert-true (< pos-study pos-work)
+                             "Test 24.2: work.org appended after study.org at end of list"))))
+
+          ;; 24.3 Populate empty "- [ ] " slot cleanly without inserting stray extra item
+          (with-current-buffer buf
+            (goto-char (point-min))
+            (search-forward "work.org")
+            (end-of-line)
+            (insert "\n- [ ] ")
+            (save-buffer))
+          (with-current-buffer hud-buf
+            (org-focus-hud-refresh)
+            (goto-char (point-min)) ; cursor at point-min
+            (org-focus-hud-add-checklist "reading.org"))
+          (with-current-buffer buf
+            (let ((content (buffer-string)))
+              (assert-true (string-match-p "- \\[ \\] reading.org" content)
+                           "Test 24.3: reading.org populated in buffer")
+              (assert-true (not (string-match-p "- \\[ \\] \\(\n\\|$\\)" content))
+                           "Test 24.3: Empty bullet slot was cleanly populated, not orphaned")))))
+    (when (buffer-live-p hud-buf) (kill-buffer hud-buf))
+    (when (buffer-live-p buf) (kill-buffer buf))
+    (when (file-exists-p temp-file) (delete-file temp-file))))
+
+;; Test 24.4: Task with drawers and NO checklist items initially
+(let* ((temp-file (make-temp-file "test-no-checklists-" nil ".org"))
+       (buf (find-file-noselect temp-file))
+       (hud-buf (get-buffer-create "*Org Focus HUD*")))
+  (unwind-protect
+      (with-current-buffer buf
+        (org-mode)
+        (insert "* TODO Task With Drawers But No Checklists
+SCHEDULED: <2026-10-06 Tue>
+:PROPERTIES:
+:ID:       drawer-test-123
+:END:
+:LOGBOOK:
+CLOCK: [2026-10-01 Thu 15:00]--[2026-10-01 Thu 15:30] =>  0:30
+:END:
+Initial description line.
+* Next Heading
+")
+        (save-buffer)
+        (let ((m (progn (goto-char (point-min)) (point-marker))))
+          (with-current-buffer hud-buf
+            (org-focus-hud-mode)
+            (setq org-focus-hud--target-marker m)
+            (org-focus-hud-refresh)
+            (goto-char (point-min))
+            (org-focus-hud-add-checklist "First Step"))
+          (with-current-buffer buf
+            (let ((content (buffer-string)))
+              (let ((pos-end (string-match ":END:" content (string-match ":LOGBOOK:" content)))
+                    (pos-item (string-match "- \\[ \\] First Step" content)))
+                (assert-true (< pos-end pos-item)
+                             "Test 24.4: First Step inserted AFTER :LOGBOOK: :END: in body"))))))
+    (when (buffer-live-p hud-buf) (kill-buffer hud-buf))
+    (when (buffer-live-p buf) (kill-buffer buf))
+    (when (file-exists-p temp-file) (delete-file temp-file))))
+
 ;; ============================================================================
 ;; SUMMARY
 ;; ============================================================================

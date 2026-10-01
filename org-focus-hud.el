@@ -335,6 +335,20 @@ Eliminates blank lines between sections and avoids padding empty rows."
           (push (append item (list :level level)) res))))
     (nreverse res)))
 
+(defun org-focus-hud--body-start (body-end)
+  "Return position where task body begins, after all planning and initial drawers."
+  (org-back-to-heading t)
+  (org-end-of-meta-data nil)
+  (while (and (< (point) body-end)
+              (or (looking-at "^[ \t]*$")
+                  (looking-at "^[ \t]*:[A-Za-z0-9_-]+:[ \t]*$")))
+    (if (looking-at "^[ \t]*:[A-Za-z0-9_-]+:[ \t]*$")
+        (if (re-search-forward "^[ \t]*:END:.*$" body-end t)
+            (forward-line 1)
+          (forward-line 1))
+      (forward-line 1)))
+  (min (point) body-end))
+
 (defun org-focus-hud--get-checklists (marker)
   "Return a list of checklist and bullet items for task at MARKER.
 Captures all plain list items (with checkboxes or plain bullets)
@@ -349,19 +363,23 @@ Each item is a plist:
                        (or (and (org-goto-first-child) (point))
                            (and (outline-next-heading) (point))
                            (point-max))))
-           (meta-end (save-excursion
-                       (org-back-to-heading t)
-                       (org-end-of-meta-data t)
-                       (min (point) body-end))))
+           (start-pos (save-excursion
+                        (org-focus-hud--body-start body-end))))
       (save-excursion
-        (goto-char meta-end)
+        (goto-char start-pos)
         (while (< (point) body-end)
           (cond
-           ;; Skip drawers (like :LOGBOOK:, :PROPERTIES:, etc.)
+           ;; Skip drawers (like :LOGBOOK:, :PROPERTIES:, etc.) if any appear in body
            ((looking-at "^[ \t]*:[A-Za-z0-9_-]+:[ \t]*$")
-            (if (re-search-forward "^[ \t]*:END:[ \t]*$" body-end t)
+            (if (re-search-forward "^[ \t]*:END:.*$" body-end t)
                 (forward-line 1)
-              (goto-char body-end)))
+              (forward-line 1)))
+           ;; Skip stray drawer end lines
+           ((looking-at "^[ \t]*:END:?.*$")
+            (forward-line 1))
+           ;; Skip stray clock lines
+           ((looking-at "^[ \t]*CLOCK:")
+            (forward-line 1))
            ;; Match plain list items (bullets or checkboxes)
            ((looking-at "^\\([ \t]*\\)\\([-+*]\\|\\(?:[0-9]+\\|[A-Za-z]\\)[.)]\\)[ \t]+\\(?:\\(\\[[ Xx-]\\]\\)[ \t]+\\)?\\(.*\\)$")
             (let* ((indent (length (match-string 1)))
@@ -995,14 +1013,21 @@ child sub-bullets, and notes indented deeper than the item's bullet."
       (forward-line 1)
       (while (and (not item-end) (< (point) body-end))
         (cond
-         ((looking-at "^\\*+[ 	]+")
+         ((looking-at "^\\*+[ \t]+")
           (setq item-end (point)))
-         ((looking-at "^[ 	]*$")
+         ((looking-at "^[ \t]*:[A-Za-z0-9_-]+:[ \t]*$")
+          (setq item-end (point)))
+         ((looking-at "^[ \t]*:END:?.*$")
+          (setq item-end (point)))
+         ((looking-at "^[ \t]*$")
           (let ((next-indent
                  (save-excursion
-                   (while (and (< (point) body-end) (looking-at "^[ 	]*$"))
+                   (while (and (< (point) body-end) (looking-at "^[ \t]*$"))
                      (forward-line 1))
-                   (if (and (< (point) body-end) (not (looking-at "^\\*+[ 	]+")))
+                   (if (and (< (point) body-end)
+                            (not (looking-at "^\\*+[ \t]+"))
+                            (not (looking-at "^[ \t]*:[A-Za-z0-9_-]+:[ \t]*$"))
+                            (not (looking-at "^[ \t]*:END:?.*$")))
                        (current-indentation)
                      -1))))
             (if (> next-indent indent)
@@ -1018,15 +1043,21 @@ child sub-bullets, and notes indented deeper than the item's bullet."
   "Add a checklist item or plain bullet with ITEM-TEXT to the current task.
 If point is on a checklist or bullet item in the Focus HUD, inserts the
 new item below the current item's block, matching its indentation.
-If point is not on a list item, inserts at the end of the list across the body.
+If point is not on a list item, inserts after the last checklist item across the body.
+If there are no checklist items, inserts at the start of the task body
+(after all planning lines and drawers like :PROPERTIES: and :LOGBOOK:).
 If ITEM-TEXT starts with a bullet marker (- , + , * ) or AS-BULLET is non-nil,
 inserts as a plain bullet; otherwise inserts with a checkbox [ ]."
   (interactive
    (list (read-string (if current-prefix-arg "Plain bullet item: " "Checklist / bullet item: "))
          current-prefix-arg))
-  (let ((m org-focus-hud--target-marker)
-        (pos (get-text-property (point) 'focus-check-pos))
-        (new-pos nil))
+  (let* ((m (or (get-text-property (point) 'focus-marker)
+                org-focus-hud--target-marker
+                (and (derived-mode-p 'org-mode)
+                     (not (derived-mode-p 'org-agenda-mode))
+                     (save-excursion (org-back-to-heading t) (point-marker)))))
+         (pos (get-text-property (point) 'focus-check-pos))
+         (new-pos nil))
     (unless (and m (markerp m) (marker-buffer m))
       (user-error "No active task in Focus HUD"))
     (when (string-empty-p (string-trim item-text))
@@ -1038,67 +1069,71 @@ inserts as a plain bullet; otherwise inserts with a checkbox [ ]."
                            (or (and (org-goto-first-child) (point))
                                (and (outline-next-heading) (point))
                                (point-max))))
-               (meta-end (save-excursion
-                           (org-back-to-heading t)
-                           (org-end-of-meta-data t)
-                           (min (point) body-end)))
+               (all-items (org-focus-hud--get-checklists m))
                (clean-text (string-trim item-text))
                (is-bullet (or as-bullet
-                              (string-match-p "^[-+*][ 	]+" clean-text))))
-          (if pos
-              ;; Insert below current cursor list item block
-              (let* ((cur-bounds (org-focus-hud--item-bounds pos body-end))
-                     (cur-indent (save-excursion (goto-char (car cur-bounds)) (current-indentation)))
+                              (string-match-p "^[-+*][ \t]+" clean-text))))
+          ;; Case 1: Cursor is on a specific list item in the Focus HUD
+          (if (and pos (cl-find-if (lambda (it) (equal (plist-get it :pos) pos)) all-items))
+              (let* ((cur-item (cl-find-if (lambda (it) (equal (plist-get it :pos) pos)) all-items))
+                     (cur-bounds (org-focus-hud--item-bounds pos body-end))
+                     (cur-indent (or (plist-get cur-item :indent)
+                                     (save-excursion (goto-char (car cur-bounds)) (current-indentation))))
                      (indent-str (make-string cur-indent ?\s))
                      (new-line (if is-bullet
-                                   (if (string-match-p "^[-+*][ 	]+" clean-text)
-                                       (format "%s%s
-" indent-str clean-text)
-                                     (format "%s- %s
-" indent-str clean-text))
-                                 (format "%s- [ ] %s
-" indent-str clean-text))))
-                (goto-char (cdr cur-bounds))
-                (unless (bolp) (insert "
-"))
-                (setq new-pos (point))
-                (insert new-line))
-            ;; Cursor not on list item: append at the end of lists across body
-            (let ((last-item-pos nil)
-                  (new-line (if is-bullet
-                                (if (string-match-p "^[-+*][ 	]+" clean-text)
-                                    (format "  %s
-" clean-text)
-                                  (format "  - %s
-" clean-text))
-                              (format "  - [ ] %s
-" clean-text))))
-              (save-excursion
-                (goto-char meta-end)
-                (while (re-search-forward "^[ 	]*\\(?:[-+*]\\|\\(?:[0-9]+\\|[A-Za-z]\\)[.)]\\)[ 	]+" body-end t)
-                  (setq last-item-pos (match-beginning 0))))
-              (if last-item-pos
-                  (let* ((bounds (org-focus-hud--item-bounds last-item-pos body-end))
-                         (last-indent (save-excursion (goto-char (car bounds)) (current-indentation)))
-                         (indent-str (make-string last-indent ?\s))
-                         (item-line (if is-bullet
-                                        (if (string-match-p "^[-+*][ 	]+" clean-text)
-                                            (format "%s%s
-" indent-str clean-text)
-                                          (format "%s- %s
-" indent-str clean-text))
-                                      (format "%s- [ ] %s
-" indent-str clean-text))))
-                    (goto-char (cdr bounds))
-                    (unless (bolp) (insert "
-"))
+                                   (if (string-match-p "^[-+*][ \t]+" clean-text)
+                                       (format "%s%s\n" indent-str clean-text)
+                                     (format "%s- %s\n" indent-str clean-text))
+                                 (format "%s- [ ] %s\n" indent-str clean-text))))
+                (if (string-empty-p (string-trim (or (plist-get cur-item :text) "")))
+                    (progn
+                      (delete-region (car cur-bounds) (cdr cur-bounds))
+                      (goto-char (car cur-bounds))
+                      (setq new-pos (point))
+                      (insert new-line))
+                  (goto-char (cdr cur-bounds))
+                  (unless (bolp) (insert "\n"))
+                  (setq new-pos (point))
+                  (insert new-line)))
+
+            ;; Case 2: Cursor is NOT on a list item in the Focus HUD (e.g. pos is nil or stale)
+            (if all-items
+                ;; 2a. Task already has checklist items: append after the last checklist item
+                (let* ((last-item (car (last all-items)))
+                       (last-pos (plist-get last-item :pos))
+                       (last-bounds (org-focus-hud--item-bounds last-pos body-end))
+                       (last-indent (or (plist-get last-item :indent)
+                                        (save-excursion (goto-char (car last-bounds)) (current-indentation))))
+                       (indent-str (make-string last-indent ?\s))
+                       (item-line (if is-bullet
+                                      (if (string-match-p "^[-+*][ \t]+" clean-text)
+                                          (format "%s%s\n" indent-str clean-text)
+                                        (format "%s- %s\n" indent-str clean-text))
+                                    (format "%s- [ ] %s\n" indent-str clean-text))))
+                  (if (string-empty-p (string-trim (or (plist-get last-item :text) "")))
+                      (progn
+                        (delete-region (car last-bounds) (cdr last-bounds))
+                        (goto-char (car last-bounds))
+                        (setq new-pos (point))
+                        (insert item-line))
+                    (goto-char (cdr last-bounds))
+                    (unless (bolp) (insert "\n"))
                     (setq new-pos (point))
-                    (insert item-line))
-                (goto-char meta-end)
-                (unless (bolp) (insert "
-"))
+                    (insert item-line)))
+
+              ;; 2b. Task has NO checklist items: insert at body start (after all drawers)
+              (let* ((body-start (org-focus-hud--body-start body-end))
+                     (new-line (if is-bullet
+                                   (if (string-match-p "^[-+*][ \t]+" clean-text)
+                                       (format "  %s\n" clean-text)
+                                     (format "  - %s\n" clean-text))
+                                 (format "  - [ ] %s\n" clean-text))))
+                (goto-char body-start)
+                (unless (bolp) (insert "\n"))
                 (setq new-pos (point))
                 (insert new-line))))
+
+          (ignore-errors (org-update-checkbox-count))
           (when (buffer-file-name (buffer-base-buffer)) (save-buffer)))))
     (org-focus-hud-refresh)
     (let ((hud-buf (get-buffer "*Org Focus HUD*")))
