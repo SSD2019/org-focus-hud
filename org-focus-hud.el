@@ -270,6 +270,11 @@ Called with one argument: (minutes)."
   :type 'boolean
   :group 'org-focus-hud)
 
+(defcustom org-focus-hud-follow-active-clock t
+  "When non-nil, automatically switch the Focus HUD to newly clocked tasks."
+  :type 'boolean
+  :group 'org-focus-hud)
+
 (defcustom org-focus-hud-show-help nil
   "Whether to display the shortkey legend by default in the Focus HUD cockpit.
 Defaults to nil (hidden until `?' is toggled)."
@@ -318,6 +323,9 @@ Eliminates blank lines between sections and avoids padding empty rows."
 
 (defvar-local org-focus-hud--target-marker nil
   "Buffer-local marker of the task currently being tracked in the Focus HUD.")
+
+(defvar org-focus-hud--inhibit-clock-hooks nil
+  "Non-nil to inhibit Focus HUD clock hooks from running.")
 
 (defun org-focus-hud--calculate-levels (items)
   "Calculate hierarchical nesting :level (0, 1, 2, ...) for ITEMS based on :indent."
@@ -885,9 +893,15 @@ Returns a plist with task details or nil if no active task found."
                           (concat (propertize "[?]" 'face 'org-focus-hud-key-face) " Hide shortcuts help")))
           (insert (format "  %-35s  %-42s\n"
                           (concat (propertize "[o]" 'face 'org-focus-hud-key-face) " Open in Other Window")
-                          (concat (propertize "[O]" 'face 'org-focus-hud-key-face) " Jump to Org File"))))
+                          (concat (propertize "[O]" 'face 'org-focus-hud-key-face) " Jump to Org File")))
+          (insert (format "  %-35s  %-42s\n"
+                          (concat (propertize "[z]" 'face 'org-focus-hud-key-face) " Toggle compact view")
+                          (concat (propertize "[c]" 'face 'org-focus-hud-key-face) "   Clock into today's task"))))
       (insert "  " (propertize "[?]" 'face 'org-focus-hud-key-face)
-              " " (propertize "Shortcuts help" 'face 'shadow)
+              " " (propertize "Shortcuts" 'face 'shadow)
+              "  ·  "
+              (propertize "[c]" 'face 'org-focus-hud-key-face)
+              " " (propertize "Clock-in" 'face 'shadow)
               "  ·  "
               (propertize "[z]" 'face 'org-focus-hud-key-face)
               " " (propertize (if org-focus-hud-compact "Spacious" "Compact") 'face 'shadow)
@@ -944,7 +958,10 @@ Returns a plist with task details or nil if no active task found."
                           (concat (propertize "[p]" 'face 'org-focus-hud-key-face) "   Pause / Resume Clock")))
           (insert (format "  %-35s  %-42s\n"
                           (concat (propertize "[O]" 'face 'org-focus-hud-key-face) " Jump to Org File")
-                          (concat (propertize "[q]" 'face 'org-focus-hud-key-face) "   Minimize HUD"))))
+                          (concat (propertize "[q]" 'face 'org-focus-hud-key-face) "   Minimize HUD")))
+          (insert (format "  %-35s  %-42s\n"
+                          (concat (propertize "[z]" 'face 'org-focus-hud-key-face) " Toggle compact view")
+                          (concat (propertize "[c]" 'face 'org-focus-hud-key-face) "   Clock into today's task"))))
       (insert (format "  %s  Show all shortcuts\n"
                       (propertize "[?]" 'face 'org-focus-hud-key-face))))))
 
@@ -1511,7 +1528,8 @@ sEffort (e.g. 30m, optional): ")
 (defun org-focus-hud-done ()
   "Mark current task DONE, clock out, and auto-advance to next scheduled task."
   (interactive)
-  (let ((m org-focus-hud--target-marker))
+  (let ((org-focus-hud--inhibit-clock-hooks t)
+        (m org-focus-hud--target-marker))
     (unless (and m (markerp m) (marker-buffer m))
       (user-error "No active task in Focus HUD"))
     (org-with-point-at m
@@ -1559,7 +1577,8 @@ Clocks out of current task and auto-advances/clocks into the next scheduled task
              (condition-case nil
                  (org-read-date nil nil t-ans)
                (error t-ans))))))
-  (let ((m org-focus-hud--target-marker))
+  (let ((org-focus-hud--inhibit-clock-hooks t)
+        (m org-focus-hud--target-marker))
     (unless (and m (markerp m) (marker-buffer m))
       (user-error "No active task in Focus HUD"))
     (let* ((waiting-state (or (car org-focus-hud-waiting-states) "WAITING")))
@@ -1639,7 +1658,8 @@ Clocks out of current task and auto-advances/clocks into the next scheduled task
 (defun org-focus-hud-toggle-pause ()
   "Toggle pause/resume clock on the current task."
   (interactive)
-  (let ((m org-focus-hud--target-marker))
+  (let ((org-focus-hud--inhibit-clock-hooks t)
+        (m org-focus-hud--target-marker))
     (unless (and m (markerp m) (marker-buffer m))
       (user-error "No active task in Focus HUD"))
     (if (org-focus-hud--task-clocked-p m)
@@ -1699,7 +1719,8 @@ Clocks out of current task and auto-advances/clocks into the next scheduled task
 (defun org-focus-hud-clock-in-task ()
   "Select a scheduled task from today to clock into and view in Focus HUD."
   (interactive)
-  (let* ((today-tasks (ignore-errors (org-focus-hud--get-today-tasks)))
+  (let* ((org-focus-hud--inhibit-clock-hooks t)
+         (today-tasks (ignore-errors (org-focus-hud--get-today-tasks)))
          (active-tasks (cl-remove-if (lambda (tk) (plist-get tk :is-done)) today-tasks)))
     (if (null active-tasks)
         (user-error "No pending scheduled tasks found for today")
@@ -1877,6 +1898,41 @@ Clocks out of current task and auto-advances/clocks into the next scheduled task
           (cancel-timer org-focus-hud--timer)
           (setq org-focus-hud--timer nil))))))
 
+(defun org-focus-hud--on-clock-in ()
+  "Switch Focus HUD to newly clocked task if `org-focus-hud-follow-active-clock' is non-nil."
+  (unless org-focus-hud--inhibit-clock-hooks
+    (when (and (bound-and-true-p org-focus-hud-follow-active-clock)
+               (fboundp 'org-clocking-p)
+               (or (org-clocking-p) (and (fboundp 'org-clock-is-active) (org-clock-is-active))))
+      (let ((buf (get-buffer "*Org Focus HUD*")))
+        (when (and buf (buffer-live-p buf))
+          (let ((m (or (and (boundp 'org-clock-hd-marker)
+                            (markerp org-clock-hd-marker)
+                            (marker-buffer org-clock-hd-marker)
+                            (copy-marker org-clock-hd-marker))
+                       (and (boundp 'org-clock-marker)
+                            (markerp org-clock-marker)
+                            (marker-buffer org-clock-marker)
+                            (org-with-point-at org-clock-marker
+                              (save-excursion
+                                (org-back-to-heading t)
+                                (point-marker)))))))
+            (when (and m (markerp m) (marker-buffer m))
+              (with-current-buffer buf
+                (setq org-focus-hud--target-marker m)
+                (org-focus-hud-refresh)))))))))
+
+(defun org-focus-hud--on-clock-out ()
+  "Refresh Focus HUD when clocking out so status updates immediately."
+  (unless org-focus-hud--inhibit-clock-hooks
+    (let ((buf (get-buffer "*Org Focus HUD*")))
+      (when (and buf (buffer-live-p buf))
+        (with-current-buffer buf
+          (org-focus-hud-refresh))))))
+
+(add-hook 'org-clock-in-hook #'org-focus-hud--on-clock-in)
+(add-hook 'org-clock-out-hook #'org-focus-hud--on-clock-out)
+
 ;;;###autoload
 (defun org-focus-hud (&optional marker)
   "Open the Org Auto Scheduler Focus HUD for MARKER (or current active task).
@@ -1935,6 +1991,7 @@ Brings up a dedicated, distraction-free cockpit with pacing and live capture."
 (defalias 'org-auto-scheduler-focus-goto-task 'org-focus-hud-goto-task)
 (defalias 'org-auto-scheduler-focus-goto-task-other-window 'org-focus-hud-goto-task-other-window)
 (defalias 'org-auto-scheduler-focus-clock-in-task 'org-focus-hud-clock-in-task)
+(defvaralias 'org-auto-scheduler-focus-follow-active-clock 'org-focus-hud-follow-active-clock)
 (defalias 'org-auto-scheduler-focus-log-work 'org-focus-hud-log-work)
 (defalias 'org-auto-scheduler-focus-log-scroll-up 'org-focus-hud-log-scroll-up)
 (defalias 'org-auto-scheduler-focus-log-scroll-down 'org-focus-hud-log-scroll-down)

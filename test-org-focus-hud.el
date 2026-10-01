@@ -824,6 +824,84 @@ Initial description line.
     (when (buffer-live-p buf) (kill-buffer buf))
     (when (file-exists-p temp-file) (delete-file temp-file))))
 
+;;; ============================================================================
+;;; TEST 25: Follow Active Clock & Clock-In Key Discoverability
+;;; ============================================================================
+(message "\n--- TEST 25: Follow Active Clock & Clock-In Key Discoverability ---")
+(let* ((temp-file (make-temp-file "test-clock-follow-" nil ".org"))
+       (buf (find-file-noselect temp-file))
+       (hud-buf nil))
+  (unwind-protect
+      (progn
+        ;; 25.1 Verify "c" keybinding
+        (assert-equal (lookup-key org-focus-hud-mode-map (kbd "c"))
+                      #'org-focus-hud-clock-in-task
+                      "Test 25.1: 'c' key bound to org-focus-hud-clock-in-task")
+        (assert-true org-focus-hud-follow-active-clock
+                     "Test 25.1: org-focus-hud-follow-active-clock is t by default")
+
+        (with-current-buffer buf
+          (org-mode)
+          (insert "* TODO Task Alpha\n:PROPERTIES:\n:Effort: 1:00\n:END:\n:LOGBOOK:\n:END:\n\n* TODO Task Beta\n:PROPERTIES:\n:Effort: 0:45\n:END:\n:LOGBOOK:\n:END:\n")
+          (save-buffer))
+
+        (let ((m1 (with-current-buffer buf (goto-char (point-min)) (point-marker)))
+              (m2 (with-current-buffer buf (goto-char (point-min)) (re-search-forward "Task Beta") (org-back-to-heading t) (point-marker))))
+
+          ;; Open HUD on Task Alpha
+          (org-focus-hud m1)
+          (setq hud-buf (get-buffer "*Org Focus HUD*"))
+          (assert-true (buffer-live-p hud-buf) "Test 25.2: Focus HUD buffer opened")
+
+          (with-current-buffer hud-buf
+            ;; Check that "c" is visible in footer and help
+            (assert-true (string-match-p (regexp-quote "[c] Clock-in") (buffer-string))
+                         "Test 25.2: [c] Clock-in visible in compact bottom bar")
+            (org-focus-hud-toggle-help)
+            (assert-true (string-match-p (regexp-quote "[c]   Clock into today's task") (buffer-string))
+                         "Test 25.2: [c] Clock into today's task visible in shortcuts help table")
+            (org-focus-hud-toggle-help)
+            (assert-true (string-match-p "Task Alpha" (buffer-string))
+                         "Test 25.2: HUD initially focused on Task Alpha"))
+
+          ;; 25.3 Clock into Task Beta outside Focus HUD
+          (with-current-buffer buf
+            (goto-char (marker-position m2))
+            (org-clock-in))
+
+          ;; HUD must automatically switch to Task Beta
+          (with-current-buffer hud-buf
+            (assert-equal (marker-position org-focus-hud--target-marker) (marker-position m2)
+                          "Test 25.3: Focus HUD target-marker automatically switched to Task Beta")
+            (assert-true (string-match-p "Task Beta" (buffer-string))
+                         "Test 25.3: Focus HUD buffer content displays Task Beta")
+            (assert-true (not (string-match-p (regexp-quote "[PAUSED / NOT CLOCKED]") (buffer-string)))
+                         "Test 25.3: Task Beta is actively clocked in"))
+
+          ;; 25.4 Clock out outside Focus HUD -> immediate refresh to PAUSED
+          (with-current-buffer buf
+            (org-clock-out nil t))
+          (with-current-buffer hud-buf
+            (assert-true (string-match-p (regexp-quote "[PAUSED / NOT CLOCKED]") (buffer-string))
+                         "Test 25.4: Clock out outside HUD immediately shows [PAUSED / NOT CLOCKED]"))
+
+          ;; 25.5 When org-focus-hud-follow-active-clock is nil, clock-in does not switch HUD
+          (setq org-focus-hud-follow-active-clock nil)
+          (with-current-buffer buf
+            (goto-char (marker-position m1))
+            (org-clock-in))
+          (with-current-buffer hud-buf
+            (assert-equal (marker-position org-focus-hud--target-marker) (marker-position m2)
+                          "Test 25.5: HUD remains on Task Beta when follow-active-clock is nil"))
+
+          ;; Cleanup clock
+          (with-current-buffer buf
+            (when (org-clocking-p) (org-clock-out nil t)))
+          (setq org-focus-hud-follow-active-clock t)))
+    (when (and hud-buf (buffer-live-p hud-buf)) (kill-buffer hud-buf))
+    (when (buffer-live-p buf) (kill-buffer buf))
+    (when (file-exists-p temp-file) (delete-file temp-file))))
+
 ;; ============================================================================
 ;; SUMMARY
 ;; ============================================================================

@@ -128,12 +128,15 @@ Clone the repository and add it to your load-path:
   :bind ("C-c f" . org-focus-hud)
   :config
   ;; Optional: Customize refresh interval in seconds
-  (setq org-focus-hud-refresh-interval 15))
+  (setq org-focus-hud-refresh-interval 15)
+  ;; Automatically follow newly clocked tasks (default t)
+  (setq org-focus-hud-follow-active-clock t))
 #+end_src
 
 * 🔗 Integration with Org Auto Scheduler
 
 If you use [[https://github.com/SSD2019/org-auto-scheduler][org-auto-scheduler]], Focus HUD automatically hooks into the scheduler:
+- Automatically follows active clocks: clocking into any task in Org or Agenda immediately updates the Focus HUD cockpit (=org-focus-hud-follow-active-clock=).
 - Pressing =+= ripples and repacks downstream schedule slots.
 - Pressing =d= or =w= automatically advances and clocks into the next auto-scheduled task for today.
 - Pressing =c= provides a completion list of today's scheduled slots.
