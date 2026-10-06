@@ -898,8 +898,15 @@ Initial description line.
           (with-current-buffer buf
             (when (org-clocking-p) (org-clock-out nil t)))
           (setq org-focus-hud-follow-active-clock t)))
+    (when (buffer-live-p buf)
+      (with-current-buffer buf
+        (when (fboundp 'org-clock-is-active)
+          (when (or (and (fboundp 'org-clocking-p) (org-clocking-p))
+                    (org-clock-is-active))
+            (org-clock-out nil t)))
+        (set-buffer-modified-p nil)
+        (kill-buffer buf)))
     (when (and hud-buf (buffer-live-p hud-buf)) (kill-buffer hud-buf))
-    (when (buffer-live-p buf) (kill-buffer buf))
     (when (file-exists-p temp-file) (delete-file temp-file))))
 
 ;; TEST 26: Progressive Subtask Redistribution, Micro-Timer & Nested Checklists
@@ -994,15 +1001,31 @@ Initial description line.
               (assert-true (string-match-p "2h Done · 3h Left · 5h Reserve / 10h" hud-str)
                            "Test 26.4: Reopening restores hours to Left symmetrically"))
 
-            ;; 26.5 Focus shortcut ('f') toggles active in-progress
+            ;; 26.5 Focus shortcut ('f') toggles active in-progress & auto-clocks in
             (goto-char (point-min))
             (re-search-forward "Step Two API Endpoints")
             (beginning-of-line)
             (org-focus-hud-focus-checklist)
             (let ((hud-str (buffer-string)))
               (assert-true (string-match-p "▶ \\[-\\] Step Two API Endpoints" hud-str)
-                           "Test 26.5: 'f' key focused item into [-] state"))
-            ;; Press 'f' again to pause back to [ ]
+                           "Test 26.5: 'f' key focused item into [-] state")
+              (assert-true (org-focus-hud--task-clocked-p m)
+                           "Test 26.5: Focusing item auto-clocked in to task"))
+            ;; Test pause ('p') pauses clock and micro-timer
+            (org-focus-hud-toggle-pause)
+            (let ((hud-str (buffer-string)))
+              (assert-true (not (org-focus-hud--task-clocked-p m))
+                           "Test 26.5: 'p' paused task clock")
+              (assert-true (string-match-p "(paused)" hud-str)
+                           "Test 26.5: Micro-timer displayed (paused) suffix"))
+            ;; Test resume ('p') resumes clock and unpauses micro-timer
+            (org-focus-hud-toggle-pause)
+            (let ((hud-str (buffer-string)))
+              (assert-true (org-focus-hud--task-clocked-p m)
+                           "Test 26.5: 'p' resumed task clock")
+              (assert-true (not (string-match-p "(paused)" hud-str))
+                           "Test 26.5: Micro-timer active without (paused) suffix"))
+            ;; Press 'f' again to pause item back to [ ]
             (goto-char (point-min))
             (re-search-forward "Step Two API Endpoints")
             (beginning-of-line)
@@ -1038,8 +1061,12 @@ Initial description line.
               ;; Verify overflow block '▓' is in the bar
               (assert-true (string-match-p "▓" hud-str)
                            "Test 26.7: Deficit overflow block rendered in allocation bar")))))
+    (when (buffer-live-p buf)
+      (with-current-buffer buf
+        (ignore-errors (org-clock-out nil t))
+        (set-buffer-modified-p nil))
+      (kill-buffer buf))
     (when (and hud-buf (buffer-live-p hud-buf)) (kill-buffer hud-buf))
-    (when (buffer-live-p buf) (kill-buffer buf))
     (when (file-exists-p temp-file) (delete-file temp-file))))
 
 ;; 26.8 Nested Checklists: Envelopes, Roll-Ups, and Overruns

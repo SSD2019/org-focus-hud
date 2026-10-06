@@ -423,7 +423,15 @@ Matches trailing [2h], [90m], [1.5h], [1h30m], [2:00], [est: 2h], etc."
         (let* ((start-clock (plist-get active-data :start-clock))
                (current-clock (org-focus-hud--get-clocked-time marker)))
           (max 0 (- current-clock (or start-clock current-clock))))
-      0)))
+      (if (and key (string= (or (plist-get item :state) "") "[-]"))
+          (let ((cur-clock (org-focus-hud--get-clocked-time marker)))
+            (puthash key (list :pos item-pos
+                               :start-clock cur-clock
+                               :start-time (current-time)
+                               :title (plist-get item :clean-text))
+                     org-focus-hud--active-checklist-table)
+            0)
+        0))))
 
 (defun org-focus-hud--get-item-breadcrumb (all-items cur-item)
   "Return ancestor title for CUR-ITEM in ALL-ITEMS, or nil if at root level."
@@ -1000,23 +1008,28 @@ Returns a plist with task details or nil if no active task found."
                  (timer-str
                   (when is-active-clocked
                     (let* ((elapsed (org-focus-hud--get-item-elapsed (plist-get task-info :marker) item))
-                           (has-overrun (and effort-mins (> elapsed effort-mins))))
+                           (has-overrun (and effort-mins (> elapsed effort-mins)))
+                           (pause-suffix (if (not is-clocked) " (paused)" "")))
                       (if has-overrun
-                          (format "⏱️ ⚠️ %s (+%s)"
+                          (format "⏱️ ⚠️ %s (+%s)%s"
                                   (org-focus-hud--format-effort-human elapsed)
-                                  (org-focus-hud--format-effort-human (- elapsed effort-mins)))
+                                  (org-focus-hud--format-effort-human (- elapsed effort-mins))
+                                  pause-suffix)
                         (if effort-mins
-                            (format "⏱️ %s / %s"
+                            (format "⏱️ %s / %s%s"
                                     (org-focus-hud--format-effort-human elapsed)
-                                    (org-focus-hud--format-badge-effort effort-mins))
-                          (format "⏱️ %s" (org-focus-hud--format-effort-human elapsed)))))))
+                                    (org-focus-hud--format-badge-effort effort-mins)
+                                    pause-suffix)
+                          (format "⏱️ %s%s" (org-focus-hud--format-effort-human elapsed) pause-suffix))))))
                  (timer-face
                   (when is-active-clocked
-                    (let* ((elapsed (org-focus-hud--get-item-elapsed (plist-get task-info :marker) item))
-                           (has-overrun (and effort-mins (> elapsed effort-mins))))
-                      (if has-overrun
-                          'org-focus-hud-overrun-face
-                        'org-focus-hud-transient-face))))
+                    (if (not is-clocked)
+                        'shadow
+                      (let* ((elapsed (org-focus-hud--get-item-elapsed (plist-get task-info :marker) item))
+                             (has-overrun (and effort-mins (> elapsed effort-mins))))
+                        (if has-overrun
+                            'org-focus-hud-overrun-face
+                          'org-focus-hud-transient-face)))))
                  (inner-w 73)
                  (left-prefix (format "%s%s%s " indent-str prefix-ptr bullet-sym))
                  (left-len (string-width left-prefix))
@@ -1361,13 +1374,19 @@ to :LOGBOOK: without intrusive prompts. If point is on a plain bullet, adds [ ].
                                 (beginning-of-line)
                                 (when (looking-at "^\\([ \t]*\\(?:[-+*]\\|\\(?:[0-9]+\\|[A-Za-z]\\)[.)]\\)[ \t]+\\)\\[-\\]")
                                   (replace-match "\\1[ ]"))))))
+                        ;; Automatically clock in to parent task if not already clocked in
+                        (unless (org-focus-hud--task-clocked-p m)
+                          (save-match-data
+                            (org-with-point-at m
+                              (let ((org-focus-hud--inhibit-clock-hooks t))
+                                (org-clock-in)))))
                         (when key
                           (puthash key (list :pos pos
                                              :start-clock (org-focus-hud--get-clocked-time m)
                                              :start-time (current-time)
                                              :title (plist-get cur-item :clean-text))
                                    org-focus-hud--active-checklist-table))
-                        (message "Active focus: %s (Timer started)" (or (plist-get cur-item :clean-text) "Item")))
+                        (message "Active focus: %s (Clocked in & Timer started)" (or (plist-get cur-item :clean-text) "Item")))
                        ;; [-] → [X] (Complete & auto-log milestone)
                        ((string= cur-st "-")
                         (replace-match (concat prefix "[X]"))
@@ -1423,13 +1442,19 @@ If the item is already [-], pauses it back to [ ]. Clears active state from othe
               (if (looking-at "^\\([ \t]*[-+*]\\)[ \t]+")
                   (progn
                     (replace-match "\\1 [-] ")
+                    ;; Automatically clock in to parent task if not already clocked in
+                    (unless (org-focus-hud--task-clocked-p m)
+                      (save-match-data
+                        (org-with-point-at m
+                          (let ((org-focus-hud--inhibit-clock-hooks t))
+                            (org-clock-in)))))
                     (when key
                       (puthash key (list :pos pos
                                          :start-clock (org-focus-hud--get-clocked-time m)
                                          :start-time (current-time)
                                          :title (plist-get cur-item :clean-text))
                                org-focus-hud--active-checklist-table))
-                    (message "Active focus: %s (Timer started)" (or (plist-get cur-item :clean-text) "Item")))
+                    (message "Active focus: %s (Clocked in & Timer started)" (or (plist-get cur-item :clean-text) "Item")))
                 (org-toggle-checkbox '(4)))
             (if (looking-at "^\\([ \t]*\\(?:[-+*]\\|\\(?:[0-9]+\\|[A-Za-z]\\)[.)]\\)[ \t]+\\)\\[\\([ Xx-]\\)\\]")
                 (let ((prefix (match-string 1))
@@ -1449,13 +1474,19 @@ If the item is already [-], pauses it back to [ ]. Clears active state from othe
                             (beginning-of-line)
                             (when (looking-at "^\\([ \t]*\\(?:[-+*]\\|\\(?:[0-9]+\\|[A-Za-z]\\)[.)]\\)[ \t]+\\)\\[-\\]")
                               (replace-match "\\1[ ]"))))))
+                    ;; Automatically clock in to parent task if not already clocked in
+                    (unless (org-focus-hud--task-clocked-p m)
+                      (save-match-data
+                        (org-with-point-at m
+                          (let ((org-focus-hud--inhibit-clock-hooks t))
+                            (org-clock-in)))))
                     (when key
                       (puthash key (list :pos pos
                                          :start-clock (org-focus-hud--get-clocked-time m)
                                          :start-time (current-time)
                                          :title (plist-get cur-item :clean-text))
                                org-focus-hud--active-checklist-table))
-                    (message "Active focus: %s (Timer started)" (or (plist-get cur-item :clean-text) "Item"))))
+                    (message "Active focus: %s (Clocked in & Timer started)" (or (plist-get cur-item :clean-text) "Item"))))
               (user-error "Could not match checkbox line"))))
         (when (buffer-file-name (buffer-base-buffer))
           (save-buffer))))

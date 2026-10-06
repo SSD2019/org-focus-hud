@@ -76,7 +76,7 @@ Press =?= at any time inside the cockpit to view shortcuts:
 - *Distraction-Free Monotasking*: Eliminates future task clutter, showing only the task you should be working on right now.
 - *Real-Time Pacing & Visual Progress*: Live progress bar comparing clocked elapsed time against estimated effort, with automatic overrun warnings.
 - *Hierarchical Checklist Management*: Full in-cockpit checklist viewer and editor supporting nested checklists and plain bullets.
-- *Active Checklist Focus & Micro-Timer*: Mark any checklist item as in-progress (=[-]=) by pressing =f= or cycling with =RET=. The HUD renders an active pointer (=▶=) and live micro-timer (e.g. =⏱️ 12m / 30m=) derived from the task clock. When completed (=[X]=), a milestone entry with exact elapsed duration is automatically logged to the =:LOGBOOK:= Work Log without interrupting flow.
+- *Active Checklist Focus & Micro-Timer*: Mark any checklist item as in-progress (=[-]=) by pressing =f= or cycling with =RET=. Automatically clocks into the task headline if not already running. The HUD renders an active pointer (=▶=) and live micro-timer (e.g. =⏱️ 12m / 30m=) synchronized with the task clock. Pressing =p= pauses both the task clock and the micro-timer (displaying =⏱️ 12m / 30m (paused)=), and resuming with =p= seamlessly continues time accumulation. When completed (=[X]=), a milestone entry with exact elapsed duration is automatically logged to the =:LOGBOOK:= Work Log without interrupting flow.
 - *Nested Checklist Envelopes & Dynamic Roll-Ups*: Hierarchical checklist trees are analyzed leaf-first to prevent double counting. Parent containers without estimates dynamically roll up child efforts with =[Σ 3:30]= badges. Parent envelopes display budget progress (=[3:30 / 5:00]=) or concise overrun indicators (=[6:30 / 5:00 ⚠️]=) with zero visual clutter.
 - *Progressive Subtask Budgeting & Redistribution*: Decompose large tasks on the fly without disrupting =org-auto-scheduler=, schedule snapshots, or adherence baselines. Adding estimates to checklist items (e.g. =[2h]=, =[90m]=, =[1.5h]=) renders a dynamic scope allocation bar comparing *Done*, *Left*, and *Reserve* with deficit warnings if over-budget.
 - *In-Cockpit Item & Estimate Editing*: Press =e= on any checklist or bullet item to edit the title, estimate, or both simultaneously with pre-filled input, surgically updating the underlying Org buffer.
@@ -94,7 +94,7 @@ Press =?= at any time inside the cockpit to view shortcuts:
 | =TAB= / =S-TAB= | Next/Prev Checklist | Navigate directly between checklist items in the HUD |
 | =k= | Add Checklist / Bullet | Contextual addition: inserts below cursor item matching indentation; if not on item, appends at end of lists across body |
 | =e= / =E= | Edit Item / Estimate | Edit checklist or bullet text and estimate simultaneously with pre-filled input |
-| =f= / =F= | Focus Item / Micro-Timer | Mark item as active in-progress (=[-]=) and start micro-timer; press again to pause back to =[ ]= |
+| =f= / =F= | Focus Item / Micro-Timer | Mark item as active in-progress (=[-]=), auto-clock in, and start micro-timer; press again to pause back to =[ ]= |
 | =RET= | Toggle / Cycle Checklist | Cycle =[ ]= → =[-]= (active & timer) → =[X]= (done & auto-log milestone) → =[ ]=; with prefix ARG, binary toggle =[ ]= ↔ =[X]= |
 | =M-k= / =M-<up>= | Move Item Up | Surgically swap item block with predecessor across intervening body text/images |
 | =M-j= / =M-<down>= | Move Item Down | Surgically swap item block with successor across intervening body text/images |
@@ -109,7 +109,7 @@ Press =?= at any time inside the cockpit to view shortcuts:
 | =d= | Mark DONE & Advance | Mark task =DONE=, clock out, and auto-clock into the next scheduled task |
 | =w= | Wait on This & Advance | Prompt for note & tickler date, move to =WAITING=, and advance |
 | =+= / === | Extend (+15m) | Extend current task effort; triggers repacking when scheduler is loaded |
-| =p= | Pause / Resume | Toggle =org-clock-out= / =org-clock-in= |
+| =p= | Pause / Resume | Toggle =org-clock-out= / =org-clock-in=; pauses/resumes active checklist micro-timer in lockstep |
 | =o= | Jump to Org (Other Window) | Reveal headline in original Org buffer in other window |
 | =O= | Jump to Org (Same Window) | Reveal headline in original Org buffer in current window |
 | =c= | Clock in Task | Select and clock into any scheduled task for today |
