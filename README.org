@@ -51,7 +51,7 @@ It locks your attention exclusively onto your *single currently active or schedu
   │ (Scroll: [ / ])                                                           │
   └───────────────────────────────────────────────────────────────────────────┘
 
-  [?] Shortcuts help  ·  [l] Log  ·  [r] Refresh  ·  [q] Minimize
+  [?] Shortcuts  ·  [c] Clock-in  ·  [l] Log  ·  [r] Refresh  ·  [q] Minimize
 #+end_example
 
 Press =?= at any time inside the cockpit to view shortcuts:
@@ -66,9 +66,9 @@ Press =?= at any time inside the cockpit to view shortcuts:
   [n] + Quick Note                   [+]   Extend effort (+15m)
   [s] + Child Subtask                [p]   Pause / Resume Clock
   [a] + Sibling Task (after this)    [q]   Minimize HUD
-  [[] / []] Scroll Work Log          [?]   Hide shortcuts help
+  [[] / []] Scroll Work Log          [c]   Clock into today's task
   [o] Open in Other Window           [O]   Jump to Org File
-  [z] Toggle compact view            [c]   Clock into today's task
+  [?] Hide shortcuts help
 #+end_example
 
 * 🚀 Key Features
@@ -83,6 +83,7 @@ Press =?= at any time inside the cockpit to view shortcuts:
 - *Option 2a Surgical Item Reordering*: Move checklist items up or down with =M-k= / =M-j= across intervening body paragraphs, source code blocks, and diagrams without disturbing non-list text.
 - *Contextual Item Insertion*: Press =k= on any list item to insert a new item directly beneath it inheriting indentation, or press =k= anywhere else to append to the end of lists.
 - *In-Cockpit Capture*: Log work done with inactive timestamps (=l=), capture quick notes (=n=), create child subtasks (=s=), or queue sibling tasks (=a=) without losing flow.
+- *Responsive Dynamic Window Scaling & Column Alignment*: Focus HUD automatically scales to your window dimensions, adapting box widths to use the full available window buffer space so checklist items, subtasks, and work log entries aren't prematurely truncated. All box headers, rows, progress bars, and footers align to the exact same right vertical column (=│=).
 - *Evil / Spacemacs Compatible*: Single-key shortcuts work out of the box in Evil normal and motion states.
 - *Zero Hard Dependencies*: Works out of the box with vanilla Org mode using standard =org-clock= and =:Effort:= properties.
 - *First-Class Scheduler Integration*: Seamlessly integrates with [[https://github.com/SSD2019/org-auto-scheduler][org-auto-scheduler]] for dynamic repacking, automatic advance to next scheduled tasks, and calendar sync.
@@ -106,14 +107,13 @@ Press =?= at any time inside the cockpit to view shortcuts:
 | =n= | Add Note | Prompt for note and append timestamped entry in drawer |
 | =s= | Add Subtask | Create child headline =** TODO <title>= with optional effort |
 | =a= | Add Sibling | Create sibling task =* TODO <title>= queued directly after current task |
-| =d= | Mark DONE & Advance | Mark task =DONE=, clock out, and auto-clock into the next scheduled task |
+| =d= | Mark DONE & Advance | Prompt confirmation (customizable via `org-focus-hud-confirm-done`), mark task =DONE=, clock out, and auto-advance (prefix `C-u` bypasses prompt) |
 | =w= | Wait on This & Advance | Prompt for note & tickler date, move to =WAITING=, and advance |
 | =+= / === | Extend (+15m) | Extend current task effort; triggers repacking when scheduler is loaded |
 | =p= | Pause / Resume | Toggle =org-clock-out= / =org-clock-in=; pauses/resumes active checklist micro-timer in lockstep |
 | =o= | Jump to Org (Other Window) | Reveal headline in original Org buffer in other window |
 | =O= | Jump to Org (Same Window) | Reveal headline in original Org buffer in current window |
 | =c= | Clock in Task | Select and clock into any scheduled task for today |
-| =z= | Toggle Compact Mode | Toggle between compact (0 blank lines) and spacious (1 blank line) HUD layouts |
 | =?= | Toggle Shortcuts Legend | Toggle the in-cockpit shortcuts legend on/off |
 | =q= | Minimize | Dismiss Focus HUD window (clock remains running) |
 

@@ -335,16 +335,20 @@
               (assert-true (string-match-p "Implemented nested checklist support" hud-str)
                            "Test 21.4: Work log entry rendered in HUD")))
 
-          ;; 21.5 Scrollable Work Log when entries exceed log height
+          ;; 21.5 Scrollable Work Log when entries exceed log height (reverse order: newest first)
           (with-current-buffer hud-buf
             ;; Add 6 more log entries (total 7 > default height 5)
             (dotimes (i 6)
               (org-focus-hud-log-work (format "Progress milestone step #%d" (1+ i))))
             (let ((hud-str (buffer-string)))
-              (assert-true (string-match-p "WORK LOG \\[3-7 of 7\\]" hud-str)
-                           "Test 21.5: Work log header shows [3-7 of 7] entries visible")
+              (assert-true (string-match-p "WORK LOG \\[1-5 of 7\\]" hud-str)
+                           "Test 21.5: Work log header shows [1-5 of 7] entries visible (newest first)")
               (assert-true (string-match-p "Progress milestone step #6" hud-str)
-                           "Test 21.5: Latest milestone #6 visible at offset 0"))
+                           "Test 21.5: Latest milestone #6 visible at offset 0 (at top)")
+              (let ((p6 (string-match "Progress milestone step #6" hud-str))
+                    (p5 (string-match "Progress milestone step #5" hud-str)))
+                (assert-true (and p6 p5 (< p6 p5))
+                             "Test 21.5: Work log rendered in reverse order (newest #6 precedes older #5)")))
             ;; Scroll up to view older logs
             (org-focus-hud-log-scroll-up)
             (let ((hud-str (buffer-string)))
@@ -353,8 +357,8 @@
             ;; Scroll up again
             (org-focus-hud-log-scroll-up)
             (let ((hud-str (buffer-string)))
-              (assert-true (string-match-p "WORK LOG \\[1-5 of 7\\]" hud-str)
-                           "Test 21.5: Scroll up shifted to oldest window [1-5 of 7]")
+              (assert-true (string-match-p "WORK LOG \\[3-7 of 7\\]" hud-str)
+                           "Test 21.5: Scroll up shifted to oldest window [3-7 of 7]")
               (assert-true (string-match-p "Implemented nested checklist support" hud-str)
                            "Test 21.5: Oldest work log entry visible after scroll"))
             ;; Scroll down back toward newest
@@ -632,61 +636,84 @@
     (when (file-exists-p temp-file) (delete-file temp-file))))
 
 ;;; ============================================================================
-;;; TEST 23: Compact Layout, Whitespace Reduction & Toggle ("z")
+;;; TEST 23: Automatic Window-Size Scaling & Removal of 'z' Shortcut
 ;;; ============================================================================
-(message "\n--- TEST 23: Compact Layout, Whitespace Reduction & Toggle (\"z\") ---")
+(message "\n--- TEST 23: Automatic Window-Size Scaling & Removal of 'z' Shortcut ---")
 
-(let* ((temp-file (make-temp-file "test-compact-" nil ".org"))
+(let* ((temp-file (make-temp-file "test-autoscale-" nil ".org"))
        (buf (find-file-noselect temp-file))
        (hud-buf (get-buffer-create "*Org Focus HUD*")))
   (unwind-protect
       (with-current-buffer buf
         (org-mode)
-        (insert "* TODO Compact Layout Test Task\n:PROPERTIES:\n:Effort: 1:00\n:END:\n  - [X] Step 1\n  - [ ] Step 2\n")
+        (insert "* TODO Auto Scale Layout Test Task\n:PROPERTIES:\n:Effort: 1:00\n:END:\n  - [X] Step 1\n  - [ ] Step 2\n")
         (save-buffer)
         (let ((m (progn (goto-char (point-min)) (point-marker))))
           (with-current-buffer hud-buf
             (org-focus-hud-mode)
             (setq org-focus-hud--target-marker m)
+
+            ;; 23.1 Verify 'z' shortcut is completely removed and default is 'auto
+            (assert-equal (lookup-key org-focus-hud-mode-map (kbd "z"))
+                          nil
+                          "Test 23.1: 'z' key is unbound in org-focus-hud-mode-map")
+            (assert-equal org-focus-hud-compact 'auto
+                          "Test 23.1: org-focus-hud-compact is 'auto by default")
+
+            ;; 23.2 Compact mode eliminates blank lines between sections
             (setq org-focus-hud-compact t)
             (setq org-focus-hud-section-spacing 0)
             (org-focus-hud-refresh)
-
-            ;; 23.1 Keybinding
-            (assert-equal (lookup-key org-focus-hud-mode-map (kbd "z"))
-                          #'org-focus-hud-toggle-compact
-                          "Test 23.1: 'z' key bound to org-focus-hud-toggle-compact")
-
-            ;; 23.2 Compact mode eliminates blank lines between sections
             (let ((str (buffer-string)))
               (assert-true (string-match-p "╰[─]+╯\n  PROJECT:" str)
                            "Test 23.2: Header box directly followed by PROJECT without empty line")
               (assert-true (string-match-p "└[─]+┘\n  ┌─ WORK LOG" str)
                            "Test 23.2: Checklist box directly followed by Work Log box without empty line")
-              (assert-true (string-match-p (concat "└[─]+┘\n  " (regexp-quote "[?] Shortcuts")) str)
-                           "Test 23.2: Work Log box directly followed by footer shortcuts without empty line")
-              ;; Work log has 0 entries; in compact mode it should NOT pad with 4 empty lines
+              (assert-true (string-match-p (concat "└[─]+┘
+  " (regexp-quote "[?] Shortcuts")) str)
+                           "Test 23.2: Work Log box directly followed by single-line footer without empty line")
+              ;; Work log has 0 entries; in compact mode it should NOT pad with empty lines
               (assert-true (not (string-match-p "│[ ]{76}│" str))
                            "Test 23.2: Work log does not pad empty rows in compact mode"))
 
-            ;; 23.3 Toggle to spacious mode via 'z'
-            (org-focus-hud-toggle-compact)
-            (assert-equal org-focus-hud-compact nil
-                          "Test 23.3: Compact mode disabled after toggle")
-            (assert-equal org-focus-hud-section-spacing 1
-                          "Test 23.3: Section spacing set to 1 after toggle")
-            (let ((spacious-str (buffer-string)))
-              (assert-true (string-match-p "╰[─]+╯\n\n  PROJECT:" spacious-str)
-                           "Test 23.3: Header box separated by blank line in spacious mode")
-              (assert-true (string-match-p "└[─]+┘\n\n  ┌─ WORK LOG" spacious-str)
-                           "Test 23.3: Checklist box separated by blank line in spacious mode"))
+            ;; 23.3 Automatic compactness scaling based on window height
+            (setq org-focus-hud-compact 'auto)
+            (assert-equal (org-focus-hud--is-compact-p 24) t
+                          "Test 23.3: Small window (height 24) auto-engages compact mode")
+            (assert-equal (org-focus-hud--is-compact-p 45) nil
+                          "Test 23.3: Large window (height 45) auto-engages spacious mode")
 
-            ;; 23.4 Toggle back to compact mode
-            (org-focus-hud-toggle-compact)
-            (assert-equal org-focus-hud-compact t
-                          "Test 23.4: Compact mode restored after second toggle")
-            (assert-equal org-focus-hud-section-spacing 0
-                          "Test 23.4: Section spacing restored to 0 after second toggle"))))
+            ;; 23.4 Dynamic Work Log height scaling based on window height
+            (assert-equal (org-focus-hud--effective-log-height 16) 1
+                          "Test 23.4: Height 1 for tiny window (16)")
+            (assert-equal (org-focus-hud--effective-log-height 20) 2
+                          "Test 23.4: Height 2 for small window (20)")
+            (assert-equal (org-focus-hud--effective-log-height 26) 3
+                          "Test 23.4: Height 3 for medium window (26)")
+            (assert-equal (org-focus-hud--effective-log-height 35) 5
+                          "Test 23.4: Height 5 for standard window (35)")
+            (assert-equal (org-focus-hud--effective-log-height 45) 7
+                          "Test 23.4: Height 7 for large window (45)")
+
+            ;; 23.5 Dynamic Checklist folding
+            (let ((sample-items (list (list :text "Item 1" :state "[X]")
+                                      (list :text "Item 2" :state "[X]")
+                                      (list :text "Item 3" :state "[-]")
+                                      (list :text "Item 4" :state "[ ]")
+                                      (list :text "Item 5" :state "[ ]")
+                                      (list :text "Item 6" :state "[ ]")
+                                      (list :text "Item 7" :state "[ ]")
+                                      (list :text "Item 8" :state "[ ]"))))
+              (let ((scaled (org-focus-hud--scale-checklist-items sample-items 24 nil)))
+                (assert-equal (length (plist-get scaled :visible-items)) 3
+                              "Test 23.5: Scales to 3 visible items in tight window (24)")
+                (assert-true (> (plist-get scaled :before-folded-cnt) 0)
+                             "Test 23.5: Earlier items folded in tight window")
+                (assert-true (> (plist-get scaled :after-folded-cnt) 0)
+                             "Test 23.5: Upcoming items folded in tight window"))
+              (let ((unfolded (org-focus-hud--scale-checklist-items sample-items 24 t)))
+                (assert-equal (length (plist-get unfolded :visible-items)) 8
+                              "Test 23.5: All items visible when unfolded"))))))
     (when (buffer-live-p hud-buf) (kill-buffer hud-buf))
     (when (buffer-live-p buf) (kill-buffer buf))
     (when (file-exists-p temp-file) (delete-file temp-file))))
@@ -854,13 +881,21 @@ Initial description line.
           (assert-true (buffer-live-p hud-buf) "Test 25.2: Focus HUD buffer opened")
 
           (with-current-buffer hud-buf
-            ;; Check that "c" is visible in footer and help
+            ;; By default, show single-line shortcuts bar, not the entire legend
             (assert-true (string-match-p (regexp-quote "[c] Clock-in") (buffer-string))
-                         "Test 25.2: [c] Clock-in visible in compact bottom bar")
+                         "Test 25.2: [c] Clock-in visible in single-line footer by default")
+            (assert-true (not (string-match-p (regexp-quote "Clock into today's task") (buffer-string)))
+                         "Test 25.2: Entire legend table hidden by default")
+            ;; User presses '?' to show entire legend table
             (org-focus-hud-toggle-help)
             (assert-true (string-match-p (regexp-quote "[c]   Clock into today's task") (buffer-string))
-                         "Test 25.2: [c] Clock into today's task visible in shortcuts help table")
+                         "Test 25.2: [c] Clock into today's task visible in shortcuts help table when '?' is pressed")
+            ;; Press '?' again to return to single-line bar
             (org-focus-hud-toggle-help)
+            (assert-true (string-match-p (regexp-quote "[c] Clock-in") (buffer-string))
+                         "Test 25.2: Single-line footer restored after toggle")
+            (assert-true (not (string-match-p (regexp-quote "Clock into today's task") (buffer-string)))
+                         "Test 25.2: Entire legend hidden again")
             (assert-true (string-match-p "Task Alpha" (buffer-string))
                          "Test 25.2: HUD initially focused on Task Alpha"))
 
@@ -1105,8 +1140,409 @@ Initial description line.
     (when (buffer-live-p buf) (kill-buffer buf))
     (when (file-exists-p temp-file) (delete-file temp-file))))
 
+
+;; TEST 27: Generic Emacs Keymap & Pass-Through Behavior
+;; ============================================================================
+(message "
+--- TEST 27: Generic Emacs Keymap & Pass-Through Behavior ---")
+
+;; 27.1 Check org-focus-hud-mode-map does not intercept SPC
+(assert-equal (lookup-key org-focus-hud-mode-map (kbd "SPC")) nil
+              "Test 27.1: org-focus-hud-mode-map explicitly inhibits SPC")
+(assert-equal (lookup-key org-focus-hud-mode-map " ") nil
+              "Test 27.1: org-focus-hud-mode-map explicitly inhibits space string")
+
+;; 27.2 Check essential HUD keybindings
+(assert-equal (lookup-key org-focus-hud-mode-map (kbd "RET")) #'org-focus-hud-toggle-checklist
+              "Test 27.2: RET bound to org-focus-hud-toggle-checklist")
+(assert-equal (lookup-key org-focus-hud-mode-map (kbd "x")) #'org-focus-hud-toggle-checklist
+              "Test 27.2: x bound to org-focus-hud-toggle-checklist")
+(assert-equal (lookup-key org-focus-hud-mode-map (kbd "z")) nil
+              "Test 27.2: z is unbound in org-focus-hud-mode-map")
+(assert-equal (lookup-key org-focus-hud-mode-map (kbd "d")) #'org-focus-hud-done
+              "Test 27.2: d bound to org-focus-hud-done")
+(assert-equal (lookup-key org-focus-hud-mode-map (kbd "k")) #'org-focus-hud-add-checklist
+              "Test 27.2: k bound to org-focus-hud-add-checklist")
+(assert-equal (lookup-key org-focus-hud-mode-map (kbd "e")) #'org-focus-hud-edit-checklist
+              "Test 27.2: e bound to org-focus-hud-edit-checklist")
+(assert-equal (lookup-key org-focus-hud-mode-map (kbd "c")) #'org-focus-hud-clock-in-task
+              "Test 27.2: c bound to org-focus-hud-clock-in-task")
+(assert-equal (lookup-key org-focus-hud-mode-map (kbd "p")) #'org-focus-hud-toggle-pause
+              "Test 27.2: p bound to org-focus-hud-toggle-pause")
+(assert-equal (lookup-key org-focus-hud-mode-map (kbd "q")) #'org-focus-hud-quit
+              "Test 27.2: q bound to org-focus-hud-quit")
+(assert-equal (lookup-key org-focus-hud-mode-map (kbd "r")) #'org-focus-hud-refresh
+              "Test 27.2: r bound to org-focus-hud-refresh")
+(assert-equal (lookup-key org-focus-hud-mode-map (kbd "g")) #'org-focus-hud-refresh
+              "Test 27.2: g bound to org-focus-hud-refresh")
+
+;; 27.3 Check mode derives cleanly from special-mode
+(assert-equal (get 'org-focus-hud-mode 'derived-mode-parent) 'special-mode
+              "Test 27.3: org-focus-hud-mode derives cleanly from special-mode")
+
+;; TEST 28: Confirmation for 'd' Key Action (org-focus-hud-done)
+;; ============================================================================
+(message "\n--- TEST 28: Confirmation for 'd' Key Action (org-focus-hud-done) ---")
+
+;; 28.1 Verify defcustom default
+(assert-equal org-focus-hud-confirm-done t
+              "Test 28.1: org-focus-hud-confirm-done is t by default")
+
+(let* ((temp-file (make-temp-file "test-focus-done-confirm-" nil ".org"))
+       (buf (find-file-noselect temp-file))
+       (hud-buf (get-buffer-create "*Org Focus HUD*")))
+  (unwind-protect
+      (with-current-buffer buf
+        (org-mode)
+        (erase-buffer)
+        (insert "* TODO Task Alpha\n  SCHEDULED: <2026-10-06 Tue>\n* TODO Task Beta\n  SCHEDULED: <2026-10-06 Tue>\n")
+        (save-buffer)
+        (goto-char (point-min))
+        (let ((m (point-marker)))
+          (setq org-focus-hud--target-marker m)
+          
+          ;; 28.2 Cancel confirmation: answering "no" preserves TODO state
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (prompt) nil)))
+            (org-focus-hud-done)
+            (org-with-point-at m
+              (assert-equal (org-get-todo-state) "TODO"
+                            "Test 28.2: Declining confirmation leaves task in TODO state"))
+            (assert-equal org-focus-hud--target-marker m
+                          "Test 28.2: Declining confirmation preserves target marker"))
+
+          ;; 28.3 Confirm: answering "yes" marks task DONE
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (prompt) t)))
+            (org-focus-hud-done)
+            (org-with-point-at m
+              (assert-equal (org-get-todo-state) "DONE"
+                            "Test 28.3: Confirming marks task DONE")))
+
+          ;; 28.4 Bypass with prefix arg (skip-confirm)
+          (goto-char (point-min))
+          (re-search-forward "^\* TODO Task Beta")
+          (let ((m-beta (point-marker)))
+            (setq org-focus-hud--target-marker m-beta)
+            (cl-letf (((symbol-function 'y-or-n-p)
+                       (lambda (prompt) (error "y-or-n-p should not be called with prefix arg"))))
+              (org-focus-hud-done '(4))
+              (org-with-point-at m-beta
+                (assert-equal (org-get-todo-state) "DONE"
+                              "Test 28.4: Prefix arg bypasses confirmation prompt and marks task DONE"))))
+
+          ;; 28.5 Bypass when org-focus-hud-confirm-done is nil
+          (goto-char (point-max))
+          (insert "* TODO Task Gamma\n")
+          (save-buffer)
+          (re-search-backward "^\* TODO Task Gamma")
+          (let ((m-gamma (point-marker))
+                (org-focus-hud-confirm-done nil))
+            (setq org-focus-hud--target-marker m-gamma)
+            (cl-letf (((symbol-function 'y-or-n-p)
+                       (lambda (prompt) (error "y-or-n-p should not be called when confirm-done is nil"))))
+              (org-focus-hud-done)
+              (org-with-point-at m-gamma
+                (assert-equal (org-get-todo-state) "DONE"
+                              "Test 28.5: Disabling confirm-done marks task DONE without prompt"))))))
+    (when (and hud-buf (buffer-live-p hud-buf)) (kill-buffer hud-buf))
+    (when (buffer-live-p buf) (kill-buffer buf))
+    (when (file-exists-p temp-file) (delete-file temp-file))))
+
+;; TEST 29: Reversed Work Log Section Order (Newest First)
+;; ============================================================================
+(message "\n--- TEST 29: Reversed Work Log Section Order (Newest First) ---")
+
+(let* ((temp-file (make-temp-file "test-focus-worklog-order-" nil ".org"))
+       (buf (find-file-noselect temp-file))
+       (hud-buf (get-buffer-create "*Org Focus HUD*")))
+  (unwind-protect
+      (with-current-buffer buf
+        (org-mode)
+        (erase-buffer)
+        (insert "* TODO Order Verification Task\n")
+        (insert "  :LOGBOOK:\n")
+        (insert "  - [2026-10-06 Tue 09:00] First work log (oldest)\n")
+        (insert "  - State \"WAITING\" from \"TODO\" [2026-10-06 Tue 10:00]\n")
+        (insert "  - [2026-10-06 Tue 11:00] Second work log\n")
+        (insert "  - [2026-10-06 Tue 12:00] Third work log (newest)\n")
+        (insert "  :END:\n")
+        (save-buffer)
+        (goto-char (point-min))
+        (let ((m (point-marker)))
+          (setq org-focus-hud--target-marker m)
+          (let ((logs (org-focus-hud--get-logs m)))
+            (assert-equal (length logs) 4
+                          "Test 29.1: Extracted all 4 log entries")
+            (assert-true (string-match-p "Third work log" (plist-get (nth 0 logs) :text))
+                         "Test 29.1: First item in returned logs is the newest (Third work log)")
+            (assert-true (string-match-p "First work log" (plist-get (nth 3 logs) :text))
+                         "Test 29.1: Last item in returned logs is the oldest (First work log)"))
+
+          ;; Test rendering in HUD
+          (with-current-buffer hud-buf
+            (org-focus-hud-mode)
+            (setq org-focus-hud--target-marker m)
+            (org-focus-hud-refresh)
+            (let* ((hud-str (buffer-string))
+                   (pos-newest (string-match "Third work log" hud-str))
+                   (pos-middle (string-match "Second work log" hud-str))
+                   (pos-state  (string-match "WAITING" hud-str))
+                   (pos-oldest (string-match "First work log" hud-str)))
+              (assert-true (and pos-newest pos-middle (< pos-newest pos-middle))
+                           "Test 29.2: Newest entry appears above earlier entry in HUD")
+              (assert-true (and pos-middle pos-state (< pos-middle pos-state))
+                           "Test 29.2: Earlier entry appears above state transition in HUD")
+              (assert-true (and pos-state pos-oldest (< pos-state pos-oldest))
+                           "Test 29.2: State transition appears above oldest entry in HUD")
+
+              ;; 29.3 Test bottom border indicator when older entries exist below
+              ;; With default height 5 and 4 items, all fit -> clean border
+              (assert-true (string-match-p "└[─]+┘" hud-str)
+                           "Test 29.3: Solid border when all logs fit")
+
+              ;; Add 3 more entries so tot-cnt = 7 > 5
+              (dotimes (i 3)
+                (org-focus-hud-log-work (format "Extra Log %d" (1+ i))))
+              (let ((hud-str7 (buffer-string)))
+                (assert-true (string-match-p (regexp-quote "▼ 2 older entries below (press '[' to scroll)") hud-str7)
+                             "Test 29.3: Bottom border renders '▼ 2 older entries below' indicator"))
+
+              ;; Scroll up to view oldest window (offset 2)
+              (org-focus-hud-log-scroll-up)
+              (org-focus-hud-log-scroll-up)
+              (let ((hud-str-oldest (buffer-string)))
+                (assert-true (string-match-p (regexp-quote "▲ 2 newer above (press ']' to scroll)") hud-str-oldest)
+                             "Test 29.3: Top header renders '▲ 2 newer above' indicator")
+                (assert-true (string-match-p "└[─]+┘" hud-str-oldest)
+                             "Test 29.3: Bottom border is clean when at oldest entries"))))))
+    (when (and hud-buf (buffer-live-p hud-buf)) (kill-buffer hud-buf))
+    (when (buffer-live-p buf) (kill-buffer buf))
+    (when (file-exists-p temp-file) (delete-file temp-file))))
+
+;;; ============================================================================
+;;; TEST 30: Format A Checklist Clocking, Pie Glyphs & In-Situ Subline Progress
+;;; ============================================================================
+(message "\n--- TEST 30: Format A Checklist Clocking, Pie Glyphs & In-Situ Subline Progress ---")
+
+(let* ((temp-file (make-temp-file "test-clocked-pie-" nil ".org"))
+       (buf (find-file-noselect temp-file))
+       (hud-buf (get-buffer-create "*Org Focus HUD*")))
+  (unwind-protect
+      (progn
+        (with-current-buffer buf
+          (org-mode)
+          (insert "* TODO API Service [5h]\n"
+                  "  - [X] Database schema [1h] [clocked: 50m]\n"
+                  "  - [ ] REST authentication [45m] [clocked: 20m]\n"
+                  "  - [ ] User endpoints [30m]\n"
+                  "  - [ ] Unestimated cleanup [clocked: 15m]\n")
+          (save-buffer))
+        (let ((m (with-current-buffer buf (goto-char (point-min)) (point-marker))))
+          (with-current-buffer hud-buf
+            (org-focus-hud-mode)
+            (setq org-focus-hud--target-marker m)
+            (org-focus-hud-refresh)
+
+            ;; 30.1 Format A parsing & pie glyphs rendered at all times beside effort badge
+            (let ((hud-str (buffer-string)))
+              ;; Database schema: 50m / 60m = 83% -> ◕
+              (assert-true (string-match-p (regexp-quote "[✓ 1:00] ◕") hud-str)
+                           "Test 30.1: Completed item renders [✓ 1:00] ◕ (83% ratio)")
+              ;; REST authentication: 20m / 45m = 44% -> ◑
+              (assert-true (string-match-p (regexp-quote "[0:45] ◑") hud-str)
+                           "Test 30.1: Inactive item with clocked time renders [0:45] ◑ (44% ratio)")
+              ;; User endpoints: no time clocked -> clean [0:30] without pie glyph
+              (assert-true (string-match-p (regexp-quote "[0:30]") hud-str)
+                           "Test 30.1: Untouched item renders clean [0:30] without pie glyph")
+              ;; Unestimated cleanup: 15m clocked without effort -> [15m] ◔
+              (assert-true (string-match-p (regexp-quote "[15m] ◔") hud-str)
+                           "Test 30.1: Unestimated item renders [15m] ◔"))
+
+            ;; 30.2 Cursor-line reveals ⏱️ badge only on current cursor location line
+            ;; Place point on REST authentication in HUD buffer
+            (goto-char (point-min))
+            (re-search-forward "REST authentication")
+            (beginning-of-line)
+            (org-focus-hud--post-command-cursor)
+            (let ((hud-str (buffer-string)))
+              (assert-true (string-match-p (regexp-quote "⏱️ 20m/0:45") hud-str)
+                           "Test 30.2: Cursor on line reveals ⏱️ 20m/0:45 badge")
+              ;; Verify Database schema does NOT show its full badge
+              (assert-true (not (string-match-p (regexp-quote "⏱️ 50m") hud-str))
+                           "Test 30.2: Inactive non-cursor item does NOT show full badge"))
+
+            ;; 30.2b Move cursor to unclocked item (User endpoints) in HUD buffer
+            (re-search-forward "User endpoints")
+            (beginning-of-line)
+            (org-focus-hud--post-command-cursor)
+            (let ((hud-str (buffer-string)))
+              (assert-true (string-match-p (regexp-quote "⏱️ 0m/0:30") hud-str)
+                           "Test 30.2b: Moving cursor to unclocked item reveals ⏱️ 0m/0:30"))
+
+            ;; 30.2c Sync cursor from Org buffer to HUD
+            (with-current-buffer buf
+              (goto-char (point-min))
+              (search-forward "REST authentication")
+              (beginning-of-line)
+              (org-focus-hud--on-org-post-command))
+            (let ((hud-str (buffer-string)))
+              (assert-true (string-match-p (regexp-quote "⏱️ 20m/0:45") hud-str)
+                           "Test 30.2c: Org buffer cursor navigation syncs ⏱️ 20m/0:45 to HUD"))
+
+            ;; 30.3 Active item receives temporary sub-line progress bar
+            ;; Place point back on REST authentication and focus with 'f'
+            (goto-char (point-min))
+            (re-search-forward "REST authentication")
+            (beginning-of-line)
+            (org-focus-hud-focus-checklist)
+            (let ((hud-str (buffer-string)))
+              (assert-true (string-match-p "▶ \\[[-]\\] REST authentication" hud-str)
+                           "Test 30.3: Active item transitioned to [-] with ▶")
+              (assert-true (string-match-p "╰─► ⏱️ \\\[" hud-str)
+                           "Test 30.3: Temporary progress bar sub-line rendered below active item")
+              (assert-true (string-match-p (regexp-quote "20m / 0:45 (44%) · 25m left") hud-str)
+                           "Test 30.3: Progress telemetry shows ratio and remaining time"))
+
+            ;; 30.4 Pause clock ('p') keeps progress bar visible with (paused) suffix
+            (org-focus-hud-toggle-pause)
+            (let ((hud-str (buffer-string)))
+              (assert-true (string-match-p "╰─► ⏱️ \\\[" hud-str)
+                           "Test 30.4: Progress bar remains visible while paused")
+              (assert-true (string-match-p "(paused)" hud-str)
+                           "Test 30.4: Sub-line shows (paused) status"))
+            ;; Resume clock ('p')
+            (org-focus-hud-toggle-pause)
+
+            ;; 30.5 Pausing item focus ('f') persists accumulated time to Org file (Format A)
+            (org-focus-hud-focus-checklist)
+            (let ((file-content (with-current-buffer buf (buffer-string))))
+              (assert-true (string-match-p (regexp-quote "- [ ] REST authentication [45m] [clocked: 20m]") file-content)
+                           "Test 30.5: Item reverted to [ ] and [clocked: 20m] persisted in Org file"))
+
+            ;; 30.6 Completing active item via RET commits final clocked tag & collapses subline
+            (goto-char (point-min))
+            (re-search-forward "User endpoints")
+            (beginning-of-line)
+            ;; Cycle [ ] → [-]
+            (org-focus-hud-toggle-checklist)
+            (let ((hud-str (buffer-string)))
+              (assert-true (string-match-p "▶ \\[[-]\\] User endpoints" hud-str)
+                           "Test 30.6: User endpoints active in-progress")
+              (assert-true (string-match-p "╰─► ⏱️ \\\[" hud-str)
+                           "Test 30.6: Progress bar active for User endpoints"))
+            ;; Cycle [-] → [X]
+            (org-focus-hud-toggle-checklist)
+            (let ((hud-str (buffer-string))
+                  (file-content (with-current-buffer buf (buffer-string))))
+              ;; Progress subline collapsed
+              (assert-true (not (string-match-p "╰─► ⏱️ \\\[" hud-str))
+                           "Test 30.6: Sub-line collapsed after completion")
+              ;; Org file updated
+              (assert-true (string-match-p "- \\[X\\] User endpoints \\[30m\\] \\[clocked: [0-9]+m\\]" file-content)
+                           "Test 30.6: Completed item has [clocked: ...] tag in Org file"))))))
+    (when (and (fboundp 'org-clock-is-active) (org-clock-is-active))
+      (org-clock-out nil t))
+    (when (and hud-buf (buffer-live-p hud-buf)) (kill-buffer hud-buf))
+    (when (buffer-live-p buf) (kill-buffer buf))
+    (when (file-exists-p temp-file) (delete-file temp-file)))
+
 ;; ============================================================================
 ;; SUMMARY
+
+;;; ============================================================================
+;;; TEST 31: Dynamic Window Width Scaling & Box Border Alignment
+;;; ============================================================================
+(message "\n--- TEST 31: Dynamic Window Width Scaling & Box Border Alignment ---")
+
+(let* ((temp-file (make-temp-file "test-width-align-" nil ".org"))
+       (buf (find-file-noselect temp-file))
+       (hud-buf (get-buffer-create "*Org Focus HUD*")))
+  (unwind-protect
+      (progn
+        (with-current-buffer buf
+          (org-mode)
+          (insert "* TODO Long Feature Implementation [2h]\n"
+                  "  - [ ] This is a very long checklist item title that would normally be truncated in an eighty column window [30m]\n"
+                  "  - [ ] Short item [15m]\n")
+          (save-buffer))
+        (let ((m (with-current-buffer buf (goto-char (point-min)) (point-marker))))
+          (with-current-buffer hud-buf
+            (org-focus-hud-mode)
+            (setq org-focus-hud--target-marker m)
+
+            ;; 31.1 Standard default 80-column width alignment
+            (setq org-focus-hud--window-width-override nil)
+            (setq org-focus-hud-box-width 'auto)
+            (setq org-focus-hud-max-width nil)
+            (org-focus-hud-refresh)
+
+            (let* ((lines (split-string (buffer-string) "\n"))
+                   (box-lines (cl-remove-if-not
+                               (lambda (l)
+                                 (and (> (length l) 0)
+                                      (string-match-p "[│┐┘╮╯]" l)))
+                               lines)))
+              ;; Verify each box border line ends at column 80
+              (dolist (l box-lines)
+                (assert-equal (string-width l) 80
+                              (format "Test 31.1: Box line width 80 (line: %s)"
+                                      (substring l 0 (min 30 (length l)))))))
+
+            ;; 31.2 Scaled 120-column window width: all box borders expand to 118 columns
+            (setq org-focus-hud--window-width-override 120)
+            (org-focus-hud-refresh)
+            (let* ((lines (split-string (buffer-string) "\n"))
+                   (box-lines (cl-remove-if-not
+                               (lambda (l)
+                                 (and (> (length l) 0)
+                                      (string-match-p "[│┐┘╮╯]" l)))
+                               lines))
+                   (hud-str (buffer-string)))
+              ;; Verify every single box line now ends at column 118
+              (dolist (l box-lines)
+                (assert-equal (string-width l) 118
+                              (format "Test 31.2: Box line width 118 (line: %s)"
+                                      (substring l 0 (min 30 (length l))))))
+              ;; Verify the long checklist item was NOT truncated to '...'
+              (assert-true (string-match-p "This is a very long checklist item title that would normally be truncated" hud-str)
+                           "Test 31.2: Long checklist item not truncated in wide window"))
+
+            ;; 31.3 Clamping via org-focus-hud-max-width
+            (setq org-focus-hud-max-width 100)
+            (org-focus-hud-refresh)
+            (let* ((lines (split-string (buffer-string) "\n"))
+                   (box-lines (cl-remove-if-not
+                               (lambda (l)
+                                 (and (> (length l) 0)
+                                      (string-match-p "[│┐┘╮╯]" l)))
+                               lines)))
+              (dolist (l box-lines)
+                (assert-equal (string-width l) 100
+                              (format "Test 31.3: Box line clamped to 100 (line: %s)"
+                                      (substring l 0 (min 30 (length l)))))))
+
+            ;; 31.4 Explicit integer org-focus-hud-box-width overrides window width
+            (setq org-focus-hud-box-width 90)
+            (setq org-focus-hud-max-width nil)
+            (org-focus-hud-refresh)
+            (let* ((lines (split-string (buffer-string) "\n"))
+                   (box-lines (cl-remove-if-not
+                               (lambda (l)
+                                 (and (> (length l) 0)
+                                      (string-match-p "[│┐┘╮╯]" l)))
+                               lines)))
+              (dolist (l box-lines)
+                (assert-equal (string-width l) 90
+                              (format "Test 31.4: Fixed custom width 90 (line: %s)"
+                                      (substring l 0 (min 30 (length l)))))))
+
+            ;; Reset overrides
+            (setq org-focus-hud--window-width-override nil)
+            (setq org-focus-hud-box-width 'auto)
+            (setq org-focus-hud-max-width nil))))
+    (when (and hud-buf (buffer-live-p hud-buf)) (kill-buffer hud-buf))
+    (when (buffer-live-p buf) (kill-buffer buf))
+    (when (file-exists-p temp-file) (delete-file temp-file))))
+
 ;; ============================================================================
 (if (> test-failures 0)
     (progn
