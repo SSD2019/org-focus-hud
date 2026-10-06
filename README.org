@@ -11,6 +11,8 @@
 
 It locks your attention exclusively onto your *single currently active or scheduled task*, hiding the rest of your agenda and backlog to eliminate context switching, decision fatigue, and schedule drift.
 
+[[./assets/org-focus-hud-checklist-budgeting.gif]]
+
 #+begin_example
 ╭─────────────────────────────────────────────────────────────────────────────╮
 │ 🎯 FOCUS: Implement OAuth 2.0 PKCE Authorization Flow  [14:22 · Tue Sep 29] │
