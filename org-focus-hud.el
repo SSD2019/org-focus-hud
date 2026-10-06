@@ -357,6 +357,54 @@ Eliminates blank lines between sections and avoids padding empty rows."
       (forward-line 1)))
   (min (point) body-end))
 
+(defun org-focus-hud--extract-item-effort (text)
+  "Extract effort in minutes and clean text from TEXT.
+Returns a cons cell (CLEAN-TEXT . EFFORT-MINS).
+Matches trailing [2h], [90m], [1.5h], [1h30m], [2:00], [est: 2h], etc."
+  (if (and text
+           (string-match
+            "[ \t]*\\\[\\(?:est:[ \t]*\\)?\\(?:\\([0-9]+\\(?:\\.[0-9]+\\)?\\)[ \t]*[hH]\\(?:[ \t]*\\([0-9]+\\)[ \t]*[mM]\\)?\\|\\([0-9]+\\)[ \t]*[mM]\\|\\([0-9]+\\):\\([0-9]\\{2\\}\\)\\)\\\][ \t]*$"
+            text))
+      (let* ((match-start (match-beginning 0))
+             (clean-text (string-trim (substring text 0 match-start)))
+             (h-str (match-string 1 text))
+             (hm-str (match-string 2 text))
+             (m-str (match-string 3 text))
+             (colon-h (match-string 4 text))
+             (colon-m (match-string 5 text))
+             (mins
+              (cond
+               ((and colon-h colon-m)
+                (+ (* (string-to-number colon-h) 60)
+                   (string-to-number colon-m)))
+               (m-str
+                (string-to-number m-str))
+               (h-str
+                (let ((h (string-to-number h-str))
+                      (m (if hm-str (string-to-number hm-str) 0)))
+                  (round (+ (* h 60) m))))
+               (t nil))))
+        (cons (if (string-empty-p clean-text) text clean-text) mins))
+    (cons text nil)))
+
+(defun org-focus-hud--format-effort-human (mins)
+  "Format MINS into a human-readable effort string like `2h', `1h 30m', or `45m'."
+  (let ((m (or mins 0)))
+    (cond
+     ((<= m 0) "0m")
+     ((>= m 60)
+      (let ((h (/ m 60))
+            (rem (% m 60)))
+        (if (= rem 0)
+            (format "%dh" h)
+          (format "%dh %02dm" h rem))))
+     (t (format "%dm" m)))))
+
+(defun org-focus-hud--format-badge-effort (mins)
+  "Format MINS into a concise badge string like `2:00' or `0:45'."
+  (let ((m (or mins 0)))
+    (format "%d:%02d" (/ m 60) (% m 60))))
+
 (defun org-focus-hud--get-checklists (marker)
   "Return a list of checklist and bullet items for task at MARKER.
 Captures all plain list items (with checkboxes or plain bullets)
@@ -397,6 +445,9 @@ Each item is a plist:
                    (state (match-string-no-properties 3))
                    (raw-text (string-trim (match-string-no-properties 4)))
                    (pos (or box-pos (match-beginning 2)))
+                   (effort-pair (org-focus-hud--extract-item-effort raw-text))
+                   (clean-text (car effort-pair))
+                   (effort-mins (cdr effort-pair))
                    ;; Exclude log/note entries from checklist & bullet outline
                    (is-log-or-note
                     (or (string-match-p "^Note taken on \\[" raw-text)
@@ -409,7 +460,9 @@ Each item is a plist:
                             :indent indent
                             :bullet bullet
                             :state state
-                            :text raw-text)
+                            :text raw-text
+                            :clean-text clean-text
+                            :effort-mins effort-mins)
                       items)))
             (forward-line 1))
            (t
@@ -695,6 +748,22 @@ Returns a plist with task details or nil if no active task found."
            (box-items (cl-remove-if-not (lambda (x) (plist-get x :state)) items))
            (done-cnt (cl-count-if (lambda (x) (string-match-p "\\[[Xx]\\]" (plist-get x :state))) box-items))
            (tot-cnt (length box-items))
+           (parent-effort (or (plist-get task-info :effort) 0))
+           (done-effort (cl-reduce #'+ (mapcar (lambda (x)
+                                                 (if (and (plist-get x :state)
+                                                          (string-match-p "\\[[Xx]\\]" (plist-get x :state)))
+                                                     (or (plist-get x :effort-mins) 0)
+                                                   0))
+                                               items)))
+           (todo-effort (cl-reduce #'+ (mapcar (lambda (x)
+                                                 (if (or (null (plist-get x :state))
+                                                         (not (string-match-p "\\[[Xx]\\]" (plist-get x :state))))
+                                                     (or (plist-get x :effort-mins) 0)
+                                                   0))
+                                               items)))
+           (planned-effort (+ done-effort todo-effort))
+           (reserve (if (> parent-effort 0) (- parent-effort planned-effort) 0))
+           (has-estimates (> planned-effort 0))
            (hdr (if (> tot-cnt 0)
                     (format "┌─ CHECKLIST [%d/%d] " done-cnt tot-cnt)
                   (if items
@@ -706,6 +775,66 @@ Returns a plist with task details or nil if no active task found."
           (insert "  " (propertize "│ (No checklist or bullet items. Press 'k' to add one)" 'face 'org-focus-hud-box-face)
                   (make-string (max 0 (- 78 52)) ?\s)
                   (propertize "│" 'face 'org-focus-hud-box-face) "\n")
+        ;; Render Concept B Allocation Bar if any item has an estimate
+        (when has-estimates
+          (let* ((bar-w 20)
+                 (is-overrun (and (> parent-effort 0) (< reserve 0)))
+                 (deficit (if is-overrun (abs reserve) 0))
+                 (bar-str
+                  (if (<= parent-effort 0)
+                      (let* ((done-chars (min bar-w (round (* bar-w (/ (float done-effort) (max 1 planned-effort))))))
+                             (todo-chars (- bar-w done-chars)))
+                        (concat (propertize (make-string done-chars ?█) 'face 'org-focus-hud-progress-done-face)
+                                (propertize (make-string todo-chars ?░) 'face 'org-focus-hud-transient-face)))
+                    (if is-overrun
+                        (let* ((budget-ratio (/ (float parent-effort) planned-effort))
+                               (budget-chars (round (* bar-w budget-ratio)))
+                               (deficit-chars (max 1 (- bar-w budget-chars)))
+                               (adj-budget (- bar-w deficit-chars))
+                               (done-chars (min adj-budget (round (* bar-w (/ (float done-effort) planned-effort)))))
+                               (todo-chars (max 0 (- adj-budget done-chars))))
+                          (concat (propertize (make-string done-chars ?█) 'face 'org-focus-hud-progress-done-face)
+                                  (propertize (make-string todo-chars ?░) 'face 'org-focus-hud-transient-face)
+                                  (propertize (make-string deficit-chars ?▓) 'face 'org-focus-hud-overrun-face)))
+                      (let* ((done-chars (round (* bar-w (/ (float done-effort) parent-effort))))
+                             (todo-chars (round (* bar-w (/ (float todo-effort) parent-effort))))
+                             (clamped-todo (min todo-chars (- bar-w done-chars)))
+                             (reserve-chars (max 0 (- bar-w done-chars clamped-todo))))
+                        (concat (propertize (make-string done-chars ?█) 'face 'org-focus-hud-progress-done-face)
+                                (propertize (make-string clamped-todo ?░) 'face 'org-focus-hud-transient-face)
+                                (propertize (make-string reserve-chars ?·) 'face 'org-focus-hud-progress-remain-face))))))
+                 (info-text
+                  (if (<= parent-effort 0)
+                      (format "%s Done · %s Left (no :EFFORT: set)"
+                              (org-focus-hud--format-effort-human done-effort)
+                              (org-focus-hud--format-effort-human todo-effort))
+                    (if is-overrun
+                        (format "%s planned · ⚠️ +%s deficit / %s"
+                                (org-focus-hud--format-effort-human planned-effort)
+                                (org-focus-hud--format-effort-human deficit)
+                                (org-focus-hud--format-effort-human parent-effort))
+                      (format "%s Done · %s Left · %s Reserve / %s"
+                              (org-focus-hud--format-effort-human done-effort)
+                              (org-focus-hud--format-effort-human todo-effort)
+                              (org-focus-hud--format-effort-human reserve)
+                              (org-focus-hud--format-effort-human parent-effort)))))
+                 (alloc-prefix "ALLOC: [")
+                 (alloc-suffix "] ")
+                 (inner-w 73)
+                 (text-with-bar (concat alloc-prefix (make-string bar-w ?X) alloc-suffix info-text))
+                 (pad-count (max 0 (- inner-w (string-width text-with-bar))))
+                 (alloc-line (concat "  " (propertize "│ " 'face 'org-focus-hud-box-face)
+                                     alloc-prefix bar-str alloc-suffix
+                                     (if is-overrun
+                                         (propertize info-text 'face 'org-focus-hud-overrun-face)
+                                       info-text)
+                                     (make-string pad-count ?\s)
+                                     (propertize "│\n" 'face 'org-focus-hud-box-face)))
+                 (sep-line (concat "  " (propertize "│ " 'face 'org-focus-hud-box-face)
+                                   (propertize (make-string inner-w ?─) 'face 'org-focus-hud-box-face)
+                                   (propertize "│\n" 'face 'org-focus-hud-box-face))))
+            (insert alloc-line)
+            (insert sep-line)))
         (dolist (item items)
           (let* ((st (plist-get item :state))
                  (has-box (not (null st)))
@@ -720,35 +849,49 @@ Returns a plist with task details or nil if no active task found."
                                (if (string-match-p "^[0-9]" (or (plist-get item :bullet) ""))
                                    (plist-get item :bullet)
                                  "•")))
-                 (text (plist-get item :text))
-                 (content-str (format "%s%s %s" indent-str bullet-sym text))
-                 (max-text-len (- 78 6))
-                 (trunc-text (if (> (length content-str) max-text-len)
-                                 (concat (substring content-str 0 (- max-text-len 3)) "...")
-                               content-str))
-                 (padding (make-string (max 0 (- 78 (length trunc-text) 5)) ?\s))
+                 (raw-text (plist-get item :text))
+                 (clean-text (or (plist-get item :clean-text) raw-text))
+                 (effort-mins (plist-get item :effort-mins))
+                 (badge-str (when effort-mins
+                              (if is-done
+                                  (format "[✓ %s]" (org-focus-hud--format-badge-effort effort-mins))
+                                (format "[%s]" (org-focus-hud--format-badge-effort effort-mins)))))
+                 (badge-face (when effort-mins
+                               (if is-done
+                                   'org-focus-hud-progress-done-face
+                                 'org-focus-hud-key-face)))
+                 (badge-len (if badge-str (string-width badge-str) 0))
+                 (inner-w 73)
+                 (prefix-str (format "%s%s " indent-str bullet-sym))
+                 (prefix-len (string-width prefix-str))
+                 (avail-text (max 0 (- inner-w prefix-len (if badge-str (1+ badge-len) 0))))
+                 (display-text (if (> (string-width clean-text) avail-text)
+                                   (concat (substring clean-text 0 (max 0 (- avail-text 3))) "...")
+                                 clean-text))
+                 (pad-count (max 0 (- inner-w prefix-len (string-width display-text) badge-len)))
                  (bullet-face (if has-box
-                                 (cond (is-done 'org-focus-hud-progress-done-face)
-                                       (is-transient 'org-focus-hud-transient-face)
-                                       (t 'bold))
-                               'org-focus-hud-section-face))
+                                  (cond (is-done 'org-focus-hud-progress-done-face)
+                                        (is-transient 'org-focus-hud-transient-face)
+                                        (t 'bold))
+                                'org-focus-hud-section-face))
                  (line-str (propertize
                             (concat "  " (propertize "│ " 'face 'org-focus-hud-box-face)
                                     indent-str
                                     (propertize bullet-sym 'face bullet-face)
                                     " "
-                                    (if is-done (propertize text 'face 'shadow) text)
-                                    padding
+                                    (if is-done (propertize display-text 'face 'shadow) display-text)
+                                    (make-string pad-count ?\s)
+                                    (if badge-str (propertize badge-str 'face badge-face) "")
                                     (propertize "│" 'face 'org-focus-hud-box-face)
                                     "\n")
                             'focus-check-pos (plist-get item :pos)
-                            'focus-check-text text
+                            'focus-check-text raw-text
                             'focus-has-box has-box
                             'focus-marker (plist-get task-info :marker)
                             'mouse-face 'highlight
                             'help-echo (if has-box
-                                           "RET to toggle checklist item [ ] ↔ [X]"
-                                         "RET to add checkbox [ ] to bullet"))))
+                                           "RET to toggle [ ] ↔ [X] · 'e' to edit"
+                                         "RET to add checkbox [ ] · 'e' to edit"))))
             (insert line-str))))
       (insert "  " (propertize (concat "└" (make-string 76 ?─) "┘") 'face 'org-focus-hud-box-face) (org-focus-hud--section-sep)))
 
@@ -868,6 +1011,9 @@ Returns a plist with task details or nil if no active task found."
                           (concat (propertize "[k]" 'face 'org-focus-hud-key-face) " + Checklist / bullet item")
                           (concat (propertize "[RET]" 'face 'org-focus-hud-key-face) " Toggle item [ ] ↔ [X]")))
           (insert (format "  %-35s  %-42s\n"
+                          (concat (propertize "[e]" 'face 'org-focus-hud-key-face) " Edit item / estimate")
+                          (concat (propertize "[r]" 'face 'org-focus-hud-key-face) "   Refresh node details")))
+          (insert (format "  %-35s  %-42s\n"
                           (concat (propertize "[M-j]" 'face 'org-focus-hud-key-face) " / "
                                   (propertize "[M-k]" 'face 'org-focus-hud-key-face) " Move item down / up")
                           (concat (propertize "[r]" 'face 'org-focus-hud-key-face) "   Refresh node details")))
@@ -945,6 +1091,9 @@ Returns a plist with task details or nil if no active task found."
                           (concat (propertize "[k]" 'face 'org-focus-hud-key-face) " + Checklist item")
                           (concat (propertize "[RET]" 'face 'org-focus-hud-key-face) " Toggle checklist item [ ] ↔ [X]")))
           (insert (format "  %-35s  %-42s\n"
+                          (concat (propertize "[e]" 'face 'org-focus-hud-key-face) " Edit item / estimate")
+                          (concat (propertize "[d]" 'face 'org-focus-hud-key-face) "   Mark DONE & Advance")))
+          (insert (format "  %-35s  %-42s\n"
                           (concat (propertize "[n]" 'face 'org-focus-hud-key-face) " + Quick Note")
                           (concat (propertize "[d]" 'face 'org-focus-hud-key-face) "   Mark DONE & Advance")))
           (insert (format "  %-35s  %-42s\n"
@@ -1016,6 +1165,45 @@ If the item is a plain bullet without checkbox, adds [ ]."
               (when (buffer-file-name (buffer-base-buffer)) (save-buffer))))
           (org-focus-hud-refresh))
       (message "No checklist or bullet item at point. Press 'k' to add one."))))
+
+(defun org-focus-hud-edit-checklist ()
+  "Edit the checklist or bullet item text and estimate at point in the Focus HUD.
+Prompts with the current item text pre-filled. Updates the item line in
+the underlying Org buffer while preserving checkbox state, bullet type,
+and hierarchy indentation."
+  (interactive)
+  (let* ((pos (get-text-property (point) 'focus-check-pos))
+         (m (or (get-text-property (point) 'focus-marker)
+                org-focus-hud--target-marker
+                (and (derived-mode-p 'org-mode)
+                     (not (derived-mode-p 'org-agenda-mode))
+                     (save-excursion (org-back-to-heading t) (point-marker))))))
+    (unless (and pos m (markerp m) (marker-buffer m))
+      (user-error "Point is not on a checklist or bullet item"))
+    (org-with-point-at m
+      (org-back-to-heading t)
+      (save-excursion
+        (let* ((body-end (save-excursion
+                           (or (and (org-goto-first-child) (point))
+                               (and (outline-next-heading) (point))
+                               (point-max))))
+               (all-items (org-focus-hud--get-checklists m))
+               (cur-item (cl-find-if (lambda (it) (equal (plist-get it :pos) pos)) all-items)))
+          (unless cur-item
+            (user-error "Current item could not be located in task"))
+          (let* ((cur-text (or (plist-get cur-item :text) ""))
+                 (new-text (string-trim (read-string "Edit checklist item: " cur-text))))
+            (when (string-empty-p new-text)
+              (user-error "Checklist item text cannot be empty"))
+            (goto-char pos)
+            (beginning-of-line)
+            (if (looking-at "^\\([ \t]*\\(?:[-+*]\\|\\(?:[0-9]+\\|[A-Za-z]\\)[.)]\\)[ \t]+\\(?:\\[[ Xx-]\\][ \t]+\\)?\\)\\(.*\\)$")
+                (replace-match (concat "\\1" new-text))
+              (user-error "Failed to match list item line in buffer"))
+            (when (buffer-file-name (buffer-base-buffer))
+              (save-buffer))))))
+    (org-focus-hud-refresh)
+    (message "Updated checklist item.")))
 
 (defun org-focus-hud--item-bounds (pos body-end)
   "Return (BEG . END) for the item block at POS, up to BODY-END.
@@ -1743,6 +1931,8 @@ Clocks out of current task and auto-advances/clocks into the next scheduled task
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map special-mode-map)
     (define-key map (kbd "k") #'org-focus-hud-add-checklist)
+    (define-key map (kbd "e") #'org-focus-hud-edit-checklist)
+    (define-key map (kbd "E") #'org-focus-hud-edit-checklist)
     (define-key map (kbd "K") #'previous-line)
     (define-key map (kbd "j") #'next-line)
     (define-key map (kbd "TAB") #'org-focus-hud-next-checklist)
@@ -1809,6 +1999,8 @@ Clocks out of current task and auto-advances/clocks into the next scheduled task
   (when (and (featurep 'evil) (fboundp 'evil-local-set-key))
     (dolist (st '(motion normal visual))
       (evil-local-set-key st (kbd "k")         #'org-focus-hud-add-checklist)
+      (evil-local-set-key st (kbd "e")         #'org-focus-hud-edit-checklist)
+      (evil-local-set-key st (kbd "E")         #'org-focus-hud-edit-checklist)
       (evil-local-set-key st (kbd "K")         #'previous-line)
       (evil-local-set-key st (kbd "j")         #'next-line)
       (evil-local-set-key st (kbd "TAB")       #'org-focus-hud-next-checklist)
@@ -1846,6 +2038,8 @@ Clocks out of current task and auto-advances/clocks into the next scheduled task
   (dolist (state '(normal motion visual))
     (evil-define-key state org-focus-hud-mode-map
       (kbd "k")         #'org-focus-hud-add-checklist
+      (kbd "e")         #'org-focus-hud-edit-checklist
+      (kbd "E")         #'org-focus-hud-edit-checklist
       (kbd "K")         #'previous-line
       (kbd "j")         #'next-line
       (kbd "TAB")       #'org-focus-hud-next-checklist
@@ -1997,6 +2191,7 @@ Brings up a dedicated, distraction-free cockpit with pacing and live capture."
 (defalias 'org-auto-scheduler-focus-log-scroll-down 'org-focus-hud-log-scroll-down)
 (defalias 'org-auto-scheduler-focus-next-checklist 'org-focus-hud-next-checklist)
 (defalias 'org-auto-scheduler-focus-prev-checklist 'org-focus-hud-prev-checklist)
+(defalias 'org-auto-scheduler-focus-edit-checklist 'org-focus-hud-edit-checklist)
 (defalias 'org-auto-scheduler-focus--get-checklists 'org-focus-hud--get-checklists)
 (defalias 'org-auto-scheduler-focus--get-notes 'org-focus-hud--get-notes)
 (defalias 'org-auto-scheduler-focus--get-subtasks 'org-focus-hud--get-subtasks)

@@ -902,6 +902,106 @@ Initial description line.
     (when (buffer-live-p buf) (kill-buffer buf))
     (when (file-exists-p temp-file) (delete-file temp-file))))
 
+;; TEST 26: Progressive Subtask Redistribution, Concept B Allocation Bar & In-Cockpit Editing ('e')
+;; ============================================================================
+(message "\n--- TEST 26: Progressive Subtask Redistribution & In-Cockpit Editing ('e') ---")
+
+;; 26.1 Keybindings
+(let ((hud-buf (get-buffer-create "*Org Focus HUD*")))
+  (with-current-buffer hud-buf
+    (org-focus-hud-mode)
+    (assert-equal (lookup-key org-focus-hud-mode-map (kbd "e")) #'org-focus-hud-edit-checklist
+                  "Test 26.1: 'e' key bound to org-focus-hud-edit-checklist")
+    (assert-equal (lookup-key org-focus-hud-mode-map (kbd "E")) #'org-focus-hud-edit-checklist
+                  "Test 26.1: 'E' key bound to org-focus-hud-edit-checklist")))
+
+;; 26.2 Parsing various effort formats
+(let ((parse-cases '(("Step Alpha [2h]" . ("Step Alpha" 120))
+                     ("Step Beta [90m]" . ("Step Beta" 90))
+                     ("Step Gamma [1.5h]" . ("Step Gamma" 90))
+                     ("Step Delta [1h30m]" . ("Step Delta" 90))
+                     ("Step Epsilon [2:00]" . ("Step Epsilon" 120))
+                     ("Step Zeta [est: 45m]" . ("Step Zeta" 45))
+                     ("Step Eta no estimate" . ("Step Eta no estimate" nil)))))
+  (dolist (c parse-cases)
+    (let ((res (org-focus-hud--extract-item-effort (car c))))
+      (assert-equal (car res) (nth 0 (cdr c))
+                    (format "Test 26.2: Clean text for %s" (car c)))
+      (assert-equal (cdr res) (nth 1 (cdr c))
+                    (format "Test 26.2: Effort mins for %s" (car c))))))
+
+;; 26.3 HUD Concept B Allocation Bar Rendering, Badges, and Dynamic Toggling
+(let* ((temp-file (make-temp-file "test-redistribution-" nil ".org"))
+       (buf (find-file-noselect temp-file))
+       (hud-buf (get-buffer-create "*Org Focus HUD*")))
+  (unwind-protect
+      (with-current-buffer buf
+        (org-mode)
+        (insert "* TODO Massive Objective\n:PROPERTIES:\n:EFFORT: 10:00\n:END:\n"
+                "  - [X] Step One DB Setup [2h]\n"
+                "  - [ ] Step Two API Endpoints [3h]\n")
+        (save-buffer)
+        (let ((m (point-min-marker)))
+          (with-current-buffer hud-buf
+            (org-focus-hud-mode)
+            (setq org-focus-hud--target-marker m)
+            (org-focus-hud-refresh)
+            (let ((hud-str (buffer-string)))
+              ;; Verify Allocation Bar & Info Text
+              (assert-true (string-match-p "ALLOC: \\\[" hud-str)
+                           "Test 26.3: Concept B ALLOC bar rendered in HUD")
+              (assert-true (string-match-p "2h Done · 3h Left · 5h Reserve / 10h" hud-str)
+                           "Test 26.3: Allocation ledger correctly computes 2h Done, 3h Left, 5h Reserve")
+              ;; Verify right-aligned badges
+              (assert-true (string-match-p "\\\[✓ 2:00\\\]" hud-str)
+                           "Test 26.3: Completed item badge [✓ 2:00] rendered")
+              (assert-true (string-match-p "\\\[3:00\\\]" hud-str)
+                           "Test 26.3: Open item badge [3:00] rendered"))
+
+            ;; 26.4 Bidirectional Toggle (RET) updates ledger: complete Step Two
+            (goto-char (point-min))
+            (re-search-forward "Step Two API Endpoints")
+            (beginning-of-line)
+            (org-focus-hud-toggle-checklist)
+            (let ((hud-str (buffer-string)))
+              (assert-true (string-match-p "5h Done · 0m Left · 5h Reserve / 10h" hud-str)
+                           "Test 26.4: Toggling to DONE moves hours from Left to Done, keeping Reserve safe"))
+
+            ;; Reopen Step Two
+            (org-focus-hud-toggle-checklist)
+            (let ((hud-str (buffer-string)))
+              (assert-true (string-match-p "2h Done · 3h Left · 5h Reserve / 10h" hud-str)
+                           "Test 26.4: Reopening restores hours to Left symmetrically"))
+
+            ;; 26.5 In-Cockpit Edit ('e') updates title & time simultaneously
+            (cl-letf (((symbol-function 'read-string)
+                       (lambda (&rest _) "Step Two Enhanced REST & GraphQL [4h]")))
+              (org-focus-hud-edit-checklist))
+            ;; Verify Org source buffer updated
+            (with-current-buffer buf
+              (assert-true (string-match-p "- \\[ \\] Step Two Enhanced REST & GraphQL \\[4h\\]" (buffer-string))
+                           "Test 26.5: Underlying Org buffer item text & estimate updated"))
+            ;; Verify HUD updated immediately
+            (let ((hud-str (buffer-string)))
+              (assert-true (string-match-p "2h Done · 4h Left · 4h Reserve / 10h" hud-str)
+                           "Test 26.5: HUD reflects newly edited 4h estimate (Reserve: 4h)")
+              (assert-true (string-match-p "\\\[4:00\\\]" hud-str)
+                           "Test 26.5: HUD renders new [4:00] badge"))
+
+            ;; 26.6 Over-budget / Deficit Handling
+            ;; Add Step Three with [5h] -> Total planned = 2h + 4h + 5h = 11h on 10h parent -> 1h deficit
+            (org-focus-hud-add-checklist "Step Three Frontend UI [5h]")
+            (let ((hud-str (buffer-string)))
+              (assert-true (string-match-p "11h planned · ⚠️ \\+1h deficit / 10h" hud-str)
+                           "Test 26.6: Over-budget condition detected and deficit warning rendered")
+              ;; Verify overflow block '▓' is in the bar
+              (assert-true (string-match-p "▓" hud-str)
+                           "Test 26.6: Deficit overflow block rendered in allocation bar")))))
+    (when (and hud-buf (buffer-live-p hud-buf)) (kill-buffer hud-buf))
+    (when (buffer-live-p buf) (kill-buffer buf))
+    (when (file-exists-p temp-file) (delete-file temp-file))))
+
+
 ;; ============================================================================
 ;; SUMMARY
 ;; ============================================================================
