@@ -15,41 +15,39 @@ It locks your attention exclusively onto your *single currently active or schedu
 
 #+begin_example
 ╭─────────────────────────────────────────────────────────────────────────────╮
-│ 🎯 FOCUS: Implement OAuth 2.0 PKCE Authorization Flow  [14:22 · Tue Sep 29] │
+│ 🎯 FOCUS: Plan Birthday Party                           [14:22 · Tue Oct 06] │
 ╰─────────────────────────────────────────────────────────────────────────────╯
 
-  PROJECT:  backend-services / authentication-gateway
-  SLOT:     14:00 – 15:30 (Today) · Effort: 90m · Pacing: ⏱️ POMO 1/2 [22:15]
+  PROJECT:  personal / celebrations
+  SLOT:     14:00 – 16:00 (Today) · Effort: 2h · Pacing: ⏱️ POMO 1/2 [22:15]
 
-  TIME REMAINING: 1h 08m left (68m)  [ON PACE]
-  [██████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 22m clocked (24%)
+  TIME REMAINING: 1h 05m left (65m)  [ON PACE]
+  [███████████████░░░░░░░░░░░░░░░░░░░░░░░░░] 55m clocked (46%)
 
   ┌─ CHECKLIST [2/4] ─────────────────────────────────────────────────────────┐
-  │ ALLOC: [████████░░░░░░········] 45m Done · 25m Left · 20m Reserve / 90m   │
+  │ ALLOC: [█████████░░░░░░·····] 55m Done · 35m Left · 30m Reserve / 2h      │
   │ ───────────────────────────────────────────────────────────────────────── │
-  │ [X] Generate PKCE code verifier and challenge                    [✓ 0:30] │
-  │   • RFC 7636 Section 4.3 plain text notes and specifications              │
-  │   [X] Add redirect URL validation with state token               [✓ 0:15] │
-  │ [ ] Handle error callback when state parameter is invalid                 │
-  │   • Check query parameter error_description                               │
-  │   [ ] Write unit tests for expired state token and replay attacks  [0:25] │
+  │ [X] Finalize guest list & send invitations                       [✓ 0:30] │
+  │   • Check RSVP responses in party spreadsheet                             │
+  │ [X] Book venue & confirm reservations                            [✓ 0:25] │
+  │ [ ] Order birthday cake & catering menu                                   │
+  │   • Pick up customized chocolate cake by 16:00                            │
+  │   [ ] Confirm dietary restrictions with caterer                    [0:35] │
   └───────────────────────────────────────────────────────────────────────────┘
 
   ┌─ SUBTASKS (CHILD TODOS) ──────────────────────────────────────────────────┐
-  │ • [TODO] Implement token exchange endpoint POST /oauth/token              │
-  │ • [TODO] Store refresh tokens securely in redis cache                     │
+  │ • [TODO] Buy party decorations, balloons & candles                        │
+  │ • [TODO] Create collaborative Spotify party playlist                      │
   └───────────────────────────────────────────────────────────────────────────┘
 
   ┌─ RECENT NOTES ────────────────────────────────────────────────────────────┐
-  │ [14:18] Remember to use constant-time comparison for token hashes         │
-  │ [14:05] RFC 7636 Section 4.3 requires SHA-256 for code_challenge_method   │
+  │ [14:18] Venue deposit paid, confirmation code #PARTY-4029                 │
+  │ [14:05] Grandma requested gluten-free cupcake option                      │
   └───────────────────────────────────────────────────────────────────────────┘
 
-  ┌─ WORK LOG [4] (Press 'l' to log) ─────────────────────────────────────────┐
-  │ [2026-09-29 Tue 14:30] Completed token endpoint unit tests                │
-  │ [2026-09-29 Tue 14:15] Fixed PKCE verification edge case                  │
-  │ [2026-09-29 Tue 13:50] Integrated redis token cache                       │
-  │ [2026-09-29 Tue 13:30] Started OAuth proxy implementation                 │
+  ┌─ WORK LOG [2] (Press 'l' to log) ─────────────────────────────────────────┐
+  │ [2026-10-06 Tue 14:44] Completed: Book venue & confirm reservations (14m) │
+  │ [2026-10-06 Tue 14:00] Completed guest list review & initial invitations  │
   │ (Scroll: [ / ])                                                           │
   └───────────────────────────────────────────────────────────────────────────┘
 
