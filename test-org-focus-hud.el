@@ -902,9 +902,9 @@ Initial description line.
     (when (buffer-live-p buf) (kill-buffer buf))
     (when (file-exists-p temp-file) (delete-file temp-file))))
 
-;; TEST 26: Progressive Subtask Redistribution, Concept B Allocation Bar & In-Cockpit Editing ('e')
+;; TEST 26: Progressive Subtask Redistribution, Micro-Timer & Nested Checklists
 ;; ============================================================================
-(message "\n--- TEST 26: Progressive Subtask Redistribution & In-Cockpit Editing ('e') ---")
+(message "\n--- TEST 26: Subtask Redistribution, Micro-Timer & Nested Checklists ---")
 
 ;; 26.1 Keybindings
 (let ((hud-buf (get-buffer-create "*Org Focus HUD*")))
@@ -913,7 +913,11 @@ Initial description line.
     (assert-equal (lookup-key org-focus-hud-mode-map (kbd "e")) #'org-focus-hud-edit-checklist
                   "Test 26.1: 'e' key bound to org-focus-hud-edit-checklist")
     (assert-equal (lookup-key org-focus-hud-mode-map (kbd "E")) #'org-focus-hud-edit-checklist
-                  "Test 26.1: 'E' key bound to org-focus-hud-edit-checklist")))
+                  "Test 26.1: 'E' key bound to org-focus-hud-edit-checklist")
+    (assert-equal (lookup-key org-focus-hud-mode-map (kbd "f")) #'org-focus-hud-focus-checklist
+                  "Test 26.1: 'f' key bound to org-focus-hud-focus-checklist")
+    (assert-equal (lookup-key org-focus-hud-mode-map (kbd "F")) #'org-focus-hud-focus-checklist
+                  "Test 26.1: 'F' key bound to org-focus-hud-focus-checklist")))
 
 ;; 26.2 Parsing various effort formats
 (let ((parse-cases '(("Step Alpha [2h]" . ("Step Alpha" 120))
@@ -930,7 +934,7 @@ Initial description line.
       (assert-equal (cdr res) (nth 1 (cdr c))
                     (format "Test 26.2: Effort mins for %s" (car c))))))
 
-;; 26.3 HUD Concept B Allocation Bar Rendering, Badges, and Dynamic Toggling
+;; 26.3 HUD Concept B Allocation Bar, Badges, 3-State Cycle, and Micro-Timer
 (let* ((temp-file (make-temp-file "test-redistribution-" nil ".org"))
        (buf (find-file-noselect temp-file))
        (hud-buf (get-buffer-create "*Org Focus HUD*")))
@@ -948,59 +952,131 @@ Initial description line.
             (org-focus-hud-refresh)
             (let ((hud-str (buffer-string)))
               ;; Verify Allocation Bar & Info Text
-              (assert-true (string-match-p "ALLOC: \\\[" hud-str)
+              (assert-true (string-match-p "ALLOC: \\[" hud-str)
                            "Test 26.3: Concept B ALLOC bar rendered in HUD")
               (assert-true (string-match-p "2h Done · 3h Left · 5h Reserve / 10h" hud-str)
                            "Test 26.3: Allocation ledger correctly computes 2h Done, 3h Left, 5h Reserve")
               ;; Verify right-aligned badges
-              (assert-true (string-match-p "\\\[✓ 2:00\\\]" hud-str)
+              (assert-true (string-match-p "\\[✓ 2:00\\]" hud-str)
                            "Test 26.3: Completed item badge [✓ 2:00] rendered")
-              (assert-true (string-match-p "\\\[3:00\\\]" hud-str)
+              (assert-true (string-match-p "\\[3:00\\]" hud-str)
                            "Test 26.3: Open item badge [3:00] rendered"))
 
-            ;; 26.4 Bidirectional Toggle (RET) updates ledger: complete Step Two
+            ;; 26.4 3-State Checklist Cycling: [ ] → [-] (In-progress) → [X] (Done) → [ ]
+            (goto-char (point-min))
+            (re-search-forward "Step Two API Endpoints")
+            (beginning-of-line)
+            ;; Cycle 1: [ ] → [-] (Active focus & Micro-timer started)
+            (org-focus-hud-toggle-checklist)
+            (let ((hud-str (buffer-string)))
+              (assert-true (string-match-p "▶ \\[-\\] Step Two API Endpoints" hud-str)
+                           "Test 26.4: Item transitioned to [-] with active pointer ▶")
+              (assert-true (string-match-p "⏱️" hud-str)
+                           "Test 26.4: Micro-timer displayed on active [-] item"))
+
+            ;; Cycle 2: [-] → [X] (Complete & auto-log milestone to Work Log)
             (goto-char (point-min))
             (re-search-forward "Step Two API Endpoints")
             (beginning-of-line)
             (org-focus-hud-toggle-checklist)
             (let ((hud-str (buffer-string)))
               (assert-true (string-match-p "5h Done · 0m Left · 5h Reserve / 10h" hud-str)
-                           "Test 26.4: Toggling to DONE moves hours from Left to Done, keeping Reserve safe"))
+                           "Test 26.4: Toggling to DONE moves hours from Left to Done, keeping Reserve safe")
+              (assert-true (string-match-p "Completed: Step Two API Endpoints" hud-str)
+                           "Test 26.4: Milestone automatically logged in Work Log"))
 
-            ;; Reopen Step Two
+            ;; Cycle 3: [X] → [ ] (Reopen)
+            (goto-char (point-min))
+            (re-search-forward "Step Two API Endpoints")
+            (beginning-of-line)
             (org-focus-hud-toggle-checklist)
             (let ((hud-str (buffer-string)))
               (assert-true (string-match-p "2h Done · 3h Left · 5h Reserve / 10h" hud-str)
                            "Test 26.4: Reopening restores hours to Left symmetrically"))
 
-            ;; 26.5 In-Cockpit Edit ('e') updates title & time simultaneously
+            ;; 26.5 Focus shortcut ('f') toggles active in-progress
+            (goto-char (point-min))
+            (re-search-forward "Step Two API Endpoints")
+            (beginning-of-line)
+            (org-focus-hud-focus-checklist)
+            (let ((hud-str (buffer-string)))
+              (assert-true (string-match-p "▶ \\[-\\] Step Two API Endpoints" hud-str)
+                           "Test 26.5: 'f' key focused item into [-] state"))
+            ;; Press 'f' again to pause back to [ ]
+            (goto-char (point-min))
+            (re-search-forward "Step Two API Endpoints")
+            (beginning-of-line)
+            (org-focus-hud-focus-checklist)
+            (let ((hud-str (buffer-string)))
+              (assert-true (string-match-p "\\[ \\] Step Two API Endpoints" hud-str)
+                           "Test 26.5: 'f' key paused item back to [ ] state"))
+
+            ;; 26.6 In-Cockpit Edit ('e') updates title & time simultaneously
+            (goto-char (point-min))
+            (re-search-forward "Step Two API Endpoints")
+            (beginning-of-line)
             (cl-letf (((symbol-function 'read-string)
                        (lambda (&rest _) "Step Two Enhanced REST & GraphQL [4h]")))
               (org-focus-hud-edit-checklist))
             ;; Verify Org source buffer updated
             (with-current-buffer buf
               (assert-true (string-match-p "- \\[ \\] Step Two Enhanced REST & GraphQL \\[4h\\]" (buffer-string))
-                           "Test 26.5: Underlying Org buffer item text & estimate updated"))
+                           "Test 26.6: Underlying Org buffer item text & estimate updated"))
             ;; Verify HUD updated immediately
             (let ((hud-str (buffer-string)))
               (assert-true (string-match-p "2h Done · 4h Left · 4h Reserve / 10h" hud-str)
-                           "Test 26.5: HUD reflects newly edited 4h estimate (Reserve: 4h)")
-              (assert-true (string-match-p "\\\[4:00\\\]" hud-str)
-                           "Test 26.5: HUD renders new [4:00] badge"))
+                           "Test 26.6: HUD reflects newly edited 4h estimate (Reserve: 4h)")
+              (assert-true (string-match-p "\\[4:00\\]" hud-str)
+                           "Test 26.6: HUD renders new [4:00] badge"))
 
-            ;; 26.6 Over-budget / Deficit Handling
+            ;; 26.7 Over-budget / Deficit Handling
             ;; Add Step Three with [5h] -> Total planned = 2h + 4h + 5h = 11h on 10h parent -> 1h deficit
             (org-focus-hud-add-checklist "Step Three Frontend UI [5h]")
             (let ((hud-str (buffer-string)))
               (assert-true (string-match-p "11h planned · ⚠️ \\+1h deficit / 10h" hud-str)
-                           "Test 26.6: Over-budget condition detected and deficit warning rendered")
+                           "Test 26.7: Over-budget condition detected and deficit warning rendered")
               ;; Verify overflow block '▓' is in the bar
               (assert-true (string-match-p "▓" hud-str)
-                           "Test 26.6: Deficit overflow block rendered in allocation bar")))))
+                           "Test 26.7: Deficit overflow block rendered in allocation bar")))))
     (when (and hud-buf (buffer-live-p hud-buf)) (kill-buffer hud-buf))
     (when (buffer-live-p buf) (kill-buffer buf))
     (when (file-exists-p temp-file) (delete-file temp-file))))
 
+;; 26.8 Nested Checklists: Envelopes, Roll-Ups, and Overruns
+(let* ((temp-file (make-temp-file "test-nested-" nil ".org"))
+       (buf (find-file-noselect temp-file))
+       (hud-buf (get-buffer-create "*Org Focus HUD*")))
+  (unwind-protect
+      (with-current-buffer buf
+        (org-mode)
+        (insert "* TODO Hierarchical Project\n:PROPERTIES:\n:EFFORT: 15:00\n:END:\n"
+                "  - [ ] 1. Backend Group [5h]\n"
+                "    - [X] 1.1 DB Migration [1.5h]\n"
+                "    - [ ] 1.2 Auth Endpoints [2h]\n"
+                "  - [ ] 2. Frontend Group\n"
+                "    - [ ] 2.1 Login Modal [1h]\n"
+                "  - [ ] 3. Sync Pipeline [3h]\n"
+                "    - [ ] 3.1 Ingestion [2.5h]\n"
+                "    - [ ] 3.2 Transform [1.5h]\n")
+        (save-buffer)
+        (let ((m (point-min-marker)))
+          (with-current-buffer hud-buf
+            (org-focus-hud-mode)
+            (setq org-focus-hud--target-marker m)
+            (org-focus-hud-refresh)
+            (let ((hud-str (buffer-string)))
+              ;; Envelope in-budget badge [3:30 / 5:00]
+              (assert-true (string-match-p "\\[3:30 / 5:00\\]" hud-str)
+                           "Test 26.8: In-budget parent envelope badge [3:30 / 5:00] rendered")
+              ;; Dynamic Roll-up badge [Σ 1:00]
+              (assert-true (string-match-p "\\[Σ 1:00\\]" hud-str)
+                           "Test 26.8: Dynamic parent roll-up badge [Σ 1:00] rendered")
+              ;; Overrun envelope badge [4:00 / 3:00 ⚠️] without verbose text
+              (assert-true (string-match-p "\\[4:00 / 3:00 ⚠️\\]" hud-str)
+                           "Test 26.8: Concise overrun envelope badge [4:00 / 3:00 ⚠️] rendered")))))
+    (when (and hud-buf (buffer-live-p hud-buf)) (kill-buffer hud-buf))
+    (when (buffer-live-p buf) (kill-buffer buf))
+    (when (file-exists-p temp-file) (delete-file temp-file))))
 
 ;; ============================================================================
 ;; SUMMARY
