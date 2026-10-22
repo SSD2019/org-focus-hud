@@ -115,7 +115,7 @@ Press =?= at any time inside the cockpit to view shortcuts:
 | =O= | Jump to Org (Same Window) | Reveal headline in original Org buffer in current window |
 | =c= | Clock in Task | Select and clock into any scheduled task for today |
 | =?= | Toggle Shortcuts Legend | Toggle the in-cockpit shortcuts legend on/off |
-| =q= | Minimize | Dismiss Focus HUD window (clock remains running) |
+| =q= | Minimize / Close | Dismiss Focus HUD window or close dedicated frame (clock remains running) |
 
 * 📦 Installation
 
@@ -141,6 +141,70 @@ Clone the repository and add it to your load-path:
   (setq org-focus-hud-refresh-interval 15)
   ;; Automatically follow newly clocked tasks (default t)
   (setq org-focus-hud-follow-active-clock t))
+#+end_src
+
+* 🪟 Dedicated Always-on-Top Floating Desktop Frame
+
+You can run Org Focus HUD in its own standalone, floating, always-on-top desktop frame across your entire desktop (ideal for multi-monitor setups or keeping task pacing visible while browsing or coding in other applications).
+
+** Interactive Commands
+- =M-x org-focus-hud-frame=: Launch or bring to front the dedicated floating HUD frame.
+- =M-x org-focus-hud-toggle-frame=: Summon the HUD frame if hidden or unfocused, or dismiss it if active.
+
+** Emacs & Spacemacs Keybindings
+Add to your =~/.spacemacs= (=dotspacemacs/user-config=) or =~/.emacs.d/init.el=:
+#+begin_src emacs-lisp
+;; Spacemacs leader shortcut: SPC o h
+(spacemacs/set-leader-keys "oh" #'org-focus-hud-toggle-frame)
+
+;; Or global Emacs hotkey (e.g. F12):
+(global-set-key (kbd "<f12>") #'org-focus-hud-toggle-frame)
+#+end_src
+
+** Global Ubuntu / Linux Desktop Shortcut
+Summon or toggle the Focus HUD from *any* application (Chrome, terminal, Slack, IDE) using =emacsclient=:
+
+1. Open *Ubuntu Settings* -> *Keyboard* -> *View and Customize Shortcuts* -> *Custom Shortcuts*.
+2. Click *+* to add a shortcut:
+   - *Name*: =Org Focus HUD=
+   - *Command*: =emacsclient -n -e "(org-focus-hud-toggle-frame)"=
+   - *Shortcut*: =Super+Alt+H= (or =F12=, =Super+O=)
+
+Alternatively, add it instantly from your terminal:
+#+begin_src bash
+# Register GNOME custom shortcut keybinding:
+KEY_PATH="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom-org-focus-hud/"
+CURRENT=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings)
+gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "${CURRENT%]*}, '$KEY_PATH']"
+gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$KEY_PATH name 'Org Focus HUD'
+gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$KEY_PATH command 'emacsclient -n -e "(org-focus-hud-toggle-frame)"'
+gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$KEY_PATH binding '<Super><Alt>h'
+#+end_src
+
+** Customization
+#+begin_src emacs-lisp
+;; Frame dimensions, positioning & styling:
+(setq org-focus-hud-frame-parameters
+      '((name . "Org Focus HUD")
+        (title . "Org Focus HUD")
+        (width . 84)
+        (height . 38)
+        (top . 50)
+        (left . -30)            ; Negative left aligns relative to right screen edge
+        (z-group . above)       ; Always on top
+        (sticky . t)            ; Visible across all virtual workspaces
+        (undecorated . nil)     ; Set to t for borderless minimalist HUD widget
+        (minibuffer . t)        ; Keep minibuffer for live notes and subtask input
+        (menu-bar-lines . 0)
+        (tool-bar-lines . 0)
+        (tab-bar-lines . 0)
+        (scroll-bar-mode . nil)
+        (internal-border-width . 6)
+        (auto-raise . t)))
+
+;; Dismiss action when toggling or pressing 'q' inside dedicated frame:
+;; Options: 'delete (default), 'hide (invisible), or 'iconify (minimize)
+(setq org-focus-hud-frame-dismiss-action 'delete)
 #+end_src
 
 * 🔗 Integration with Org Auto Scheduler

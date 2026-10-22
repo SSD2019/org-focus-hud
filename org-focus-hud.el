@@ -347,6 +347,46 @@ A prefix argument (`C-u') bypasses confirmation."
   :type 'boolean
   :group 'org-focus-hud)
 
+(defcustom org-focus-hud-frame-title "Org Focus HUD"
+  "Window title for the dedicated Org Focus HUD frame."
+  :type 'string
+  :group 'org-focus-hud)
+
+(defcustom org-focus-hud-frame-parameters
+  '((name . "Org Focus HUD")
+    (title . "Org Focus HUD")
+    (width . 84)
+    (height . 38)
+    (top . 50)
+    (left . -30)
+    (z-group . above)
+    (sticky . t)
+    (undecorated . nil)
+    (minibuffer . t)
+    (menu-bar-lines . 0)
+    (tool-bar-lines . 0)
+    (tab-bar-lines . 0)
+    (scroll-bar-mode . nil)
+    (internal-border-width . 6)
+    (auto-raise . t))
+  "Frame parameters used when creating the dedicated Org Focus HUD frame.
+Key parameters include:
+  `z-group': Set to `above' to keep the frame always on top.
+  `sticky': Set to `t' to show the HUD across all virtual desktops.
+  `undecorated': Set to `t' for a borderless widget look, or `nil' for
+                 the standard window manager title bar."
+  :type '(alist :key-type symbol :value-type sexp)
+  :group 'org-focus-hud)
+
+(defcustom org-focus-hud-frame-dismiss-action 'delete
+  "Action to perform when toggling or quitting the dedicated HUD frame.
+Can be `delete' (close the frame), `hide' (make frame invisible),
+or `iconify' (minimize to dock/panel)."
+  :type '(choice (const :tag "Delete frame" delete)
+                 (const :tag "Hide frame (make invisible)" hide)
+                 (const :tag "Minimize frame" iconify))
+  :group 'org-focus-hud)
+
 (defvar-local org-focus-hud--unfold-checklists nil
   "Buffer-local flag indicating whether checklists are explicitly unfolded.")
 
@@ -367,7 +407,7 @@ A prefix argument (`C-u') bypasses confirmation."
   (or org-focus-hud--window-height-override
       (unless noninteractive
         (let* ((buf (get-buffer "*Org Focus HUD*"))
-               (win (and buf (buffer-live-p buf) (get-buffer-window buf))))
+               (win (and buf (buffer-live-p buf) (get-buffer-window buf t))))
           (when (and win (window-live-p win))
             (window-body-height win))))))
 
@@ -376,7 +416,7 @@ A prefix argument (`C-u') bypasses confirmation."
   (or org-focus-hud--window-width-override
       (unless noninteractive
         (let* ((buf (get-buffer "*Org Focus HUD*"))
-               (win (and buf (buffer-live-p buf) (get-buffer-window buf))))
+               (win (and buf (buffer-live-p buf) (get-buffer-window buf t))))
           (when (and win (window-live-p win))
             (window-body-width win))))))
 
@@ -462,7 +502,7 @@ scaling ITEMS to fit within WIN-H unless UNFOLD-P is non-nil."
 (defun org-focus-hud--on-window-size-change (&optional _win-or-frame)
   "Called when Focus HUD window size changes to auto-scale sections."
   (let ((buf (get-buffer "*Org Focus HUD*")))
-    (when (and buf (buffer-live-p buf) (get-buffer-window buf))
+    (when (and buf (buffer-live-p buf) (get-buffer-window buf t))
       (with-current-buffer buf
         (org-focus-hud-refresh)))))
 
@@ -1411,7 +1451,7 @@ Returns a plist with task details or nil if no active task found."
                                   pct
                                   (org-focus-hud--format-effort-human rem-mins)))
                          (t
-                          (format "%s elapsed (no :EFFORT: set)"
+                          (format "%s elapsed (no estimate)"
                                   (org-focus-hud--format-effort-human total-elapsed)))))
                        (prefix-sub (format "%s    ╰─► ⏱️ " indent-str))
                        (avail-sub (max 0 (- inner-w (string-width prefix-sub))))
@@ -2697,10 +2737,49 @@ to window size; manual toggling is rarely needed."
                "Shortcuts legend displayed. Press '?' again to hide."
              "Shortcuts legend hidden. Press '?' to view.")))
 
+(defun org-focus-hud--dedicated-frame-p (&optional frame)
+  "Return non-nil if FRAME (default `selected-frame') is the dedicated HUD frame."
+  (let ((f (or frame (selected-frame))))
+    (and (frame-live-p f)
+         (or (equal (frame-parameter f 'name) org-focus-hud-frame-title)
+             (equal (frame-parameter f 'title) org-focus-hud-frame-title)))))
+
+(defun org-focus-hud--get-frame ()
+  "Find an existing live dedicated Org Focus HUD frame, or nil if none."
+  (cl-find-if (lambda (f)
+                (and (frame-live-p f)
+                     (org-focus-hud--dedicated-frame-p f)))
+              (frame-list)))
+
+(defun org-focus-hud--main-frame ()
+  "Find a live non-HUD Emacs frame, or nil if none."
+  (cl-find-if (lambda (f)
+                (and (frame-live-p f)
+                     (not (org-focus-hud--dedicated-frame-p f))))
+              (frame-list)))
+
+(defun org-focus-hud--frame-focused-p (frame)
+  "Return non-nil if FRAME currently has OS input focus."
+  (let ((focus (if (fboundp 'frame-focus-state)
+                   (frame-focus-state frame)
+                 'unknown)))
+    (if (memq focus '(t nil))
+        (eq focus t)
+      (and (frame-visible-p frame)
+           (eq (selected-frame) frame)))))
+
 (defun org-focus-hud-quit ()
-  "Dismiss the Focus HUD window. Clock remains running."
+  "Dismiss the Focus HUD window or dedicated frame. Clock remains running."
   (interactive)
-  (quit-window t))
+  (let ((f (selected-frame)))
+    (if (org-focus-hud--dedicated-frame-p f)
+        (pcase org-focus-hud-frame-dismiss-action
+          ('hide (make-frame-invisible f t))
+          ('iconify (iconify-frame f))
+          (_ (if (> (length (frame-list)) 1)
+                 (delete-frame f)
+               (iconify-frame f))))
+      (quit-window t))))
 
 (defun org-focus-hud-goto-task ()
   "Jump to the original Org buffer and headline for the current task."
@@ -2708,21 +2787,40 @@ to window size; manual toggling is rarely needed."
   (let ((m org-focus-hud--target-marker))
     (unless (and m (markerp m) (marker-buffer m))
       (user-error "No active task in Focus HUD"))
-    (switch-to-buffer (marker-buffer m))
-    (goto-char (marker-position m))
-    (org-reveal)
-    (org-show-entry)))
+    (if (org-focus-hud--dedicated-frame-p)
+        (let ((main-f (org-focus-hud--main-frame)))
+          (if main-f
+              (progn
+                (make-frame-visible main-f)
+                (raise-frame main-f)
+                (select-frame-set-input-focus main-f)
+                (switch-to-buffer (marker-buffer m))
+                (goto-char (marker-position m))
+                (org-reveal)
+                (org-show-entry))
+            (let ((frame (make-frame)))
+              (select-frame-set-input-focus frame)
+              (switch-to-buffer (marker-buffer m))
+              (goto-char (marker-position m))
+              (org-reveal)
+              (org-show-entry))))
+      (switch-to-buffer (marker-buffer m))
+      (goto-char (marker-position m))
+      (org-reveal)
+      (org-show-entry))))
 
 (defun org-focus-hud-goto-task-other-window ()
   "Jump to the original Org buffer and headline for the current task in another window."
   (interactive)
-  (let ((m org-focus-hud--target-marker))
-    (unless (and m (markerp m) (marker-buffer m))
-      (user-error "No active task in Focus HUD"))
-    (switch-to-buffer-other-window (marker-buffer m))
-    (goto-char (marker-position m))
-    (org-reveal)
-    (org-show-entry)))
+  (if (org-focus-hud--dedicated-frame-p)
+      (org-focus-hud-goto-task)
+    (let ((m org-focus-hud--target-marker))
+      (unless (and m (markerp m) (marker-buffer m))
+        (user-error "No active task in Focus HUD"))
+      (switch-to-buffer-other-window (marker-buffer m))
+      (goto-char (marker-position m))
+      (org-reveal)
+      (org-show-entry))))
 
 (defun org-focus-hud-clock-in-task ()
   "Select a scheduled task from today to clock into and view in Focus HUD."
@@ -2832,7 +2930,7 @@ to window size; manual toggling is rarely needed."
   "Update Focus HUD cursor badge if point moved to a checklist item in the Org buffer."
   (let ((hud-buf (get-buffer "*Org Focus HUD*")))
     (when (and hud-buf (buffer-live-p hud-buf)
-               (or noninteractive (get-buffer-window hud-buf)))
+               (or noninteractive (get-buffer-window hud-buf t)))
       (let ((target-m (buffer-local-value 'org-focus-hud--target-marker hud-buf)))
         (when (and (markerp target-m)
                    (eq (marker-buffer target-m) (current-buffer))
@@ -2963,13 +3061,13 @@ to window size; manual toggling is rarely needed."
 (defun org-focus-hud--timer-tick ()
   "Tick function called by timer to update Focus HUD when visible."
   (let ((buf (get-buffer "*Org Focus HUD*")))
-    (if (and buf (buffer-live-p buf) (get-buffer-window buf))
+    (if (and buf (buffer-live-p buf) (get-buffer-window buf t))
         (with-current-buffer buf
           (org-focus-hud-refresh))
-      (unless (and buf (buffer-live-p buf))
-        (when org-focus-hud--timer
-          (cancel-timer org-focus-hud--timer)
-          (setq org-focus-hud--timer nil))))))
+      ;; Buffer is killed or not displayed in any live window/frame: stop timer
+      (when org-focus-hud--timer
+        (cancel-timer org-focus-hud--timer)
+        (setq org-focus-hud--timer nil)))))
 
 (defun org-focus-hud--on-clock-in ()
   "Switch Focus HUD to newly clocked task if `org-focus-hud-follow-active-clock' is non-nil."
@@ -3046,11 +3144,104 @@ Brings up a dedicated, distraction-free cockpit with pacing and live capture."
                             #'org-focus-hud--timer-tick)))
     (pop-to-buffer buf)))
 
+;;;###autoload
+(defun org-focus-hud-frame (&optional marker)
+  "Open or focus the dedicated, always-on-top frame for Org Focus HUD.
+If the dedicated frame already exists, bring it to front and focus it.
+Otherwise, create a new floating frame with `org-focus-hud-frame-parameters'."
+  (interactive)
+  (let* ((existing-frame (org-focus-hud--get-frame))
+         (buf (get-buffer-create "*Org Focus HUD*")))
+    (if (and existing-frame (frame-live-p existing-frame))
+        (progn
+          (make-frame-visible existing-frame)
+          (modify-frame-parameters existing-frame '((z-group . above) (sticky . t)))
+          (raise-frame existing-frame)
+          (select-frame-set-input-focus existing-frame)
+          (with-selected-frame existing-frame
+            (let ((win (frame-selected-window existing-frame)))
+              (set-window-buffer win buf)
+              (set-window-dedicated-p win t)))
+          (with-current-buffer buf
+            (when marker (setq org-focus-hud--target-marker marker))
+            (org-focus-hud-refresh))
+          (when (and (eq window-system 'x) (executable-find "wmctrl"))
+            (call-process "wmctrl" nil 0 nil "-r" org-focus-hud-frame-title "-b" "add,above,sticky"))
+          existing-frame)
+      ;; Ensure HUD buffer initialized
+      (with-current-buffer buf
+        (unless (eq major-mode 'org-focus-hud-mode)
+          (org-focus-hud-mode))
+        (setq org-focus-hud--show-help org-focus-hud-show-help)
+        (when marker (setq org-focus-hud--target-marker marker))
+        (org-focus-hud-refresh))
+      (unless org-focus-hud--timer
+        (setq org-focus-hud--timer
+              (run-with-timer org-focus-hud-refresh-interval
+                              org-focus-hud-refresh-interval
+                              #'org-focus-hud--timer-tick)))
+      ;; Create new dedicated frame
+      (let* ((params (copy-alist org-focus-hud-frame-parameters))
+             (params (cons `(name . ,org-focus-hud-frame-title)
+                           (assq-delete-all 'name params)))
+             (params (cons `(title . ,org-focus-hud-frame-title)
+                           (assq-delete-all 'title params)))
+             (frame (if (display-graphic-p)
+                        (make-frame params)
+                      (let ((disp (or (getenv "DISPLAY")
+                                      (cl-some (lambda (f) (frame-parameter f 'display))
+                                               (frame-list))
+                                      ":0")))
+                        (make-frame-on-display disp params)))))
+        (let ((win (frame-selected-window frame)))
+          (set-window-buffer win buf)
+          (set-window-dedicated-p win t))
+        (modify-frame-parameters frame '((z-group . above) (sticky . t)))
+        (raise-frame frame)
+        (select-frame-set-input-focus frame)
+        (when (and (eq window-system 'x) (executable-find "wmctrl"))
+          (call-process "wmctrl" nil 0 nil "-r" org-focus-hud-frame-title "-b" "add,above,sticky"))
+        frame))))
+
+;;;###autoload
+(defun org-focus-hud-toggle-frame (&optional marker)
+  "Toggle visibility of the dedicated Org Focus HUD frame.
+If the frame is visible and currently focused, dismiss it according to
+`org-focus-hud-frame-dismiss-action'.
+Otherwise, summon or focus it and ensure it is always-on-top."
+  (interactive)
+  (let ((f (org-focus-hud--get-frame)))
+    (if (and f (frame-live-p f))
+        (if (and (frame-visible-p f)
+                 (org-focus-hud--frame-focused-p f))
+            ;; Focused: dismiss
+            (pcase org-focus-hud-frame-dismiss-action
+              ('hide (make-frame-invisible f t))
+              ('iconify (iconify-frame f))
+              (_ (if (> (length (frame-list)) 1)
+                     (delete-frame f)
+                   (iconify-frame f))))
+          ;; Not focused or hidden: summon and focus
+          (make-frame-visible f)
+          (modify-frame-parameters f '((z-group . above) (sticky . t)))
+          (raise-frame f)
+          (select-frame-set-input-focus f)
+          (when (and (eq window-system 'x) (executable-find "wmctrl"))
+            (call-process "wmctrl" nil 0 nil "-a" org-focus-hud-frame-title)
+            (call-process "wmctrl" nil 0 nil "-r" org-focus-hud-frame-title "-b" "add,above,sticky"))
+          (with-current-buffer (get-buffer-create "*Org Focus HUD*")
+            (when marker (setq org-focus-hud--target-marker marker))
+            (org-focus-hud-refresh)))
+      ;; Create new dedicated frame
+      (org-focus-hud-frame marker))))
+
 ;;; ============================================================================
 ;;; Backwards Compatibility Aliases
 ;;; ============================================================================
 
 (defalias 'org-auto-scheduler-focus 'org-focus-hud)
+(defalias 'org-auto-scheduler-focus-frame 'org-focus-hud-frame)
+(defalias 'org-auto-scheduler-focus-toggle-frame 'org-focus-hud-toggle-frame)
 (defalias 'org-auto-scheduler-focus-mode 'org-focus-hud-mode)
 (defvaralias 'org-auto-scheduler-focus-mode-map 'org-focus-hud-mode-map)
 (defalias 'org-auto-scheduler-focus-refresh 'org-focus-hud-refresh)

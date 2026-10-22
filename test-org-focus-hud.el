@@ -1438,7 +1438,20 @@ Initial description line.
                            "Test 30.6: Sub-line collapsed after completion")
               ;; Org file updated
               (assert-true (string-match-p "- \\[X\\] User endpoints \\[30m\\] \\[clocked: [0-9]+m\\]" file-content)
-                           "Test 30.6: Completed item has [clocked: ...] tag in Org file"))))))
+                           "Test 30.6: Completed item has [clocked: ...] tag in Org file"))
+
+            ;; 30.7 Focusing an unestimated checklist item displays "(no estimate)"
+            (goto-char (point-min))
+            (re-search-forward "Unestimated cleanup")
+            (beginning-of-line)
+            (org-focus-hud-focus-checklist)
+            (let ((hud-str (buffer-string)))
+              (assert-true (string-match-p "▶ \\[[-]\\] Unestimated cleanup" hud-str)
+                           "Test 30.7: Unestimated item active in-progress")
+              (assert-true (string-match-p (regexp-quote "╰─► ⏱️ 15m elapsed (no estimate)") hud-str)
+                           "Test 30.7: Sub-line renders 15m elapsed (no estimate)"))
+            ;; Untoggle focus
+            (org-focus-hud-focus-checklist)))))
     (when (and (fboundp 'org-clock-is-active) (org-clock-is-active))
       (org-clock-out nil t))
     (when (and hud-buf (buffer-live-p hud-buf)) (kill-buffer hud-buf))
@@ -1542,6 +1555,44 @@ Initial description line.
     (when (and hud-buf (buffer-live-p hud-buf)) (kill-buffer hud-buf))
     (when (buffer-live-p buf) (kill-buffer buf))
     (when (file-exists-p temp-file) (delete-file temp-file))))
+
+;; ============================================================================
+;; TEST 32: Dedicated Always-On-Top Frame Setup & Helpers
+;; ============================================================================
+(message "
+--- TEST 32: Dedicated Always-On-Top Frame Setup & Helpers ---")
+
+;; 32.1 Verify default frame parameters have z-group above and sticky t
+(assert-equal (cdr (assq 'z-group org-focus-hud-frame-parameters)) 'above
+              "Test 32.1: Default frame parameters specify (z-group . above)")
+(assert-equal (cdr (assq 'sticky org-focus-hud-frame-parameters)) t
+              "Test 32.1: Default frame parameters specify (sticky . t)")
+(assert-equal (cdr (assq 'minibuffer org-focus-hud-frame-parameters)) t
+              "Test 32.1: Default frame parameters specify (minibuffer . t)")
+
+;; 32.2 Test dedicated-frame-p identification
+(let ((dummy-frame (selected-frame)))
+  ;; Regular frame is not dedicated HUD frame
+  (assert-equal (org-focus-hud--dedicated-frame-p dummy-frame) nil
+                "Test 32.2a: Normal frame is not recognized as dedicated HUD frame")
+  ;; With matching name
+  (set-frame-parameter dummy-frame 'name org-focus-hud-frame-title)
+  (assert-equal (org-focus-hud--dedicated-frame-p dummy-frame) t
+                "Test 32.2b: Frame with matching title is recognized as dedicated HUD frame")
+  (set-frame-parameter dummy-frame 'name "Normal Frame"))
+
+;; 32.3 Verify autoloaded frame functions exist and aliases match
+(assert-equal (fboundp 'org-focus-hud-frame) t
+              "Test 32.3a: org-focus-hud-frame is defined")
+(assert-equal (fboundp 'org-focus-hud-toggle-frame) t
+              "Test 32.3b: org-focus-hud-toggle-frame is defined")
+(assert-equal (fboundp 'org-auto-scheduler-focus-toggle-frame) t
+              "Test 32.3c: org-auto-scheduler-focus-toggle-frame alias exists")
+
+;; 32.4 Verify org-focus-hud--frame-focused-p helper
+(let ((dummy-frame (selected-frame)))
+  (assert-equal (booleanp (org-focus-hud--frame-focused-p dummy-frame)) t
+                "Test 32.4: org-focus-hud--frame-focused-p returns boolean"))
 
 ;; ============================================================================
 (if (> test-failures 0)
