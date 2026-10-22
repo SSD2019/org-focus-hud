@@ -1595,6 +1595,190 @@ Initial description line.
                 "Test 32.4: org-focus-hud--frame-focused-p returns boolean"))
 
 ;; ============================================================================
+;; TEST 33: Checklist Insertion Outside Clock Entries & LOGBOOK Drawers
+;; ============================================================================
+(message "\n--- TEST 33: Checklist Insertion Outside Clock Entries & LOGBOOK Drawers ---")
+
+;; 33.1 Task with :LOGBOOK: containing multiple CLOCK entries & clockify metadata, NO initial checklist
+(let* ((temp-file (make-temp-file "test-clock-drawer-" nil ".org"))
+       (buf (find-file-noselect temp-file))
+       (hud-buf (get-buffer-create "*Org Focus HUD*")))
+  (unwind-protect
+      (with-current-buffer buf
+        (org-mode)
+        (insert "* IN-PROGRESS Task With Clocked Logbook
+:PROPERTIES:
+:Effort:   0:10
+:ID:       clock-drawer-123
+:END:
+:LOGBOOK:
+CLOCK: [2026-10-21 Wed 20:53]
+CLOCK: [2026-10-21 Wed 20:50]--[2026-10-21 Wed 20:51] =>  0:01
+  clockify:6ad95de859269082ca3514a1
+CLOCK: [2026-10-21 Wed 16:42]--[2026-10-21 Wed 20:41] =>  3:59
+  clockify:6ad923b86b99b870be24cd89
+:END:
+")
+        (save-buffer)
+        (let ((m (progn (goto-char (point-min)) (point-marker))))
+          (with-current-buffer hud-buf
+            (org-focus-hud-mode)
+            (setq org-focus-hud--target-marker m)
+            (org-focus-hud-refresh)
+            (goto-char (point-min))
+            (org-focus-hud-add-checklist "First Real Checklist Item"))
+          (with-current-buffer buf
+            (let* ((file-str (buffer-string))
+                   (pos-log (string-match ":LOGBOOK:" file-str))
+                   (pos-end (string-match ":END:" file-str pos-log))
+                   (pos-item (string-match "- \\[ \\] First Real Checklist Item" file-str)))
+              (assert-true (and pos-end pos-item (< pos-end pos-item))
+                           "Test 33.1: Checklist item inserted AFTER :LOGBOOK: :END:")
+              ;; Ensure no checklist item inside LOGBOOK
+              (let ((logbook-content (substring file-str pos-log pos-end)))
+                (assert-equal (string-match-p "\\[ \\]" logbook-content) nil
+                              "Test 33.1: No checklist checkbox inside :LOGBOOK:"))))))
+    (when (buffer-live-p hud-buf) (kill-buffer hud-buf))
+    (when (buffer-live-p buf) (kill-buffer buf))
+    (when (file-exists-p temp-file) (delete-file temp-file))))
+
+;; 33.2 Folded Drawers: Checklist item insertion with folded outline & drawers
+(let* ((temp-file (make-temp-file "test-folded-drawer-" nil ".org"))
+       (buf (find-file-noselect temp-file))
+       (hud-buf (get-buffer-create "*Org Focus HUD*")))
+  (unwind-protect
+      (with-current-buffer buf
+        (org-mode)
+        (insert "* IN-PROGRESS Folded Task
+:PROPERTIES:
+:Effort:   0:10
+:ID:       folded-drawer-456
+:END:
+:LOGBOOK:
+CLOCK: [2026-10-21 Wed 20:50]--[2026-10-21 Wed 20:51] =>  0:01
+  clockify:6ad95de859269082ca3514a1
+:END:
+")
+        (org-cycle-global)
+        (save-buffer)
+        (let ((m (progn (goto-char (point-min)) (point-marker))))
+          (with-current-buffer hud-buf
+            (org-focus-hud-mode)
+            (setq org-focus-hud--target-marker m)
+            (org-focus-hud-refresh)
+            (goto-char (point-min))
+            (org-focus-hud-add-checklist "Item Under Folded"))
+          (with-current-buffer buf
+            (let* ((file-str (buffer-string))
+                   (pos-log (string-match ":LOGBOOK:" file-str))
+                   (pos-end (string-match ":END:" file-str pos-log))
+                   (pos-item (string-match "- \\[ \\] Item Under Folded" file-str)))
+              (assert-true (and pos-end pos-item (< pos-end pos-item))
+                           "Test 33.2: Checklist item inserted AFTER :END: even when folded")
+              (let ((logbook-content (substring file-str pos-log pos-end)))
+                (assert-equal (string-match-p "\\[ \\]" logbook-content) nil
+                              "Test 33.2: No checklist checkbox inside folded :LOGBOOK:"))))))
+    (when (buffer-live-p hud-buf) (kill-buffer hud-buf))
+    (when (buffer-live-p buf) (kill-buffer buf))
+    (when (file-exists-p temp-file) (delete-file temp-file))))
+
+;; 33.3 Standalone CLOCK lines directly under :PROPERTIES: (without :LOGBOOK:)
+(let* ((temp-file (make-temp-file "test-standalone-clock-" nil ".org"))
+       (buf (find-file-noselect temp-file))
+       (hud-buf (get-buffer-create "*Org Focus HUD*")))
+  (unwind-protect
+      (with-current-buffer buf
+        (org-mode)
+        (insert "* IN-PROGRESS Task With Standalone Clocks
+:PROPERTIES:
+:Effort:   0:10
+:ID:       standalone-clock-789
+:END:
+CLOCK: [2026-10-21 Wed 20:50]--[2026-10-21 Wed 20:51] =>  0:01
+  clockify:6ad95de859269082ca3514a1
+CLOCK: [2026-10-21 Wed 16:42]--[2026-10-21 Wed 20:41] =>  3:59
+")
+        (save-buffer)
+        (let ((m (progn (goto-char (point-min)) (point-marker))))
+          (with-current-buffer hud-buf
+            (org-focus-hud-mode)
+            (setq org-focus-hud--target-marker m)
+            (org-focus-hud-refresh)
+            (goto-char (point-min))
+            (org-focus-hud-add-checklist "Clean Checklist Below Clocks"))
+          (with-current-buffer buf
+            (let* ((file-str (buffer-string))
+                   (pos-prop (string-match ":PROPERTIES:" file-str))
+                   (pos-end (string-match ":END:" file-str pos-prop))
+                   (pos-last-clock (string-match "CLOCK: \\[2026-10-21 Wed 16:42\\]" file-str))
+                   (pos-item (string-match "- \\[ \\] Clean Checklist Below Clocks" file-str)))
+              (assert-true (and pos-last-clock pos-item (< pos-last-clock pos-item))
+                           "Test 33.3: Checklist item inserted AFTER standalone CLOCK lines")
+              ;; Ensure nothing inserted between :PROPERTIES: and CLOCK: lines
+              (let ((between-str (substring file-str pos-end pos-last-clock)))
+                (assert-equal (string-match-p "\\[ \\]" between-str) nil
+                              "Test 33.3: No checklist item between properties and standalone clocks"))))))
+    (when (buffer-live-p hud-buf) (kill-buffer hud-buf))
+    (when (buffer-live-p buf) (kill-buffer buf))
+    (when (file-exists-p temp-file) (delete-file temp-file))))
+
+;; 33.4 Adding checklist item when point is on item whose position shifted due to clock-in
+(let* ((temp-file (make-temp-file "test-stale-pos-" nil ".org"))
+       (buf (find-file-noselect temp-file))
+       (hud-buf (get-buffer-create "*Org Focus HUD*")))
+  (unwind-protect
+      (with-current-buffer buf
+        (org-mode)
+        (insert "* IN-PROGRESS Task Shifted Offsets
+:PROPERTIES:
+:Effort:   0:10
+:ID:       shifted-offsets-999
+:END:
+:LOGBOOK:
+:END:
+  - [ ] Alpha Step
+  - [ ] Beta Step
+")
+        (save-buffer)
+        (let ((m (progn (goto-char (point-min)) (point-marker))))
+          ;; Render HUD with Alpha Step & Beta Step
+          (with-current-buffer hud-buf
+            (org-focus-hud-mode)
+            (setq org-focus-hud--target-marker m)
+            (org-focus-hud-refresh)
+            ;; Place cursor on Alpha Step in the HUD
+            (goto-char (point-min))
+            (search-forward "Alpha Step")
+            (beginning-of-line))
+          ;; Now simulate a clock-in or log entry inserting lines into :LOGBOOK: in the Org buffer
+          ;; without re-rendering the HUD yet (so HUD text properties have old integer positions)
+          (with-current-buffer buf
+            (goto-char (point-min))
+            (search-forward ":LOGBOOK:\n")
+            (insert "CLOCK: [2026-10-21 Wed 20:53]\nCLOCK: [2026-10-21 Wed 20:50]--[2026-10-21 Wed 20:51] =>  0:01\n  clockify:6ad95de859269082ca3514a1\n")
+            (save-buffer))
+          ;; In HUD (where cursor is on Alpha Step with stale focus-check-pos), add a new checklist item
+          (with-current-buffer hud-buf
+            (org-focus-hud-add-checklist "Alpha Sub-Item"))
+          (with-current-buffer buf
+            (let* ((file-str (buffer-string))
+                   (pos-alpha (string-match "- \\[ \\] Alpha Step" file-str))
+                   (pos-sub (string-match "- \\[ \\] Alpha Sub-Item" file-str))
+                   (pos-beta (string-match "- \\[ \\] Beta Step" file-str))
+                   (pos-log (string-match ":LOGBOOK:" file-str))
+                   (pos-end (string-match ":END:" file-str pos-log)))
+              (assert-true (and pos-alpha pos-sub (< pos-alpha pos-sub))
+                           "Test 33.4: Alpha Sub-Item inserted AFTER Alpha Step")
+              (assert-true (and pos-sub pos-beta (< pos-sub pos-beta))
+                           "Test 33.4: Alpha Sub-Item inserted BEFORE Beta Step")
+              (let ((logbook-content (substring file-str pos-log pos-end)))
+                (assert-equal (string-match-p "\\[ \\]" logbook-content) nil
+                              "Test 33.4: Stale pos did NOT insert into :LOGBOOK:"))))))
+    (when (buffer-live-p hud-buf) (kill-buffer hud-buf))
+    (when (buffer-live-p buf) (kill-buffer buf))
+    (when (file-exists-p temp-file) (delete-file temp-file))))
+
+;; ============================================================================
 (if (> test-failures 0)
     (progn
       (message "\n==============================================")
