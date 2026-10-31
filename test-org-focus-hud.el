@@ -1943,6 +1943,68 @@ SCHEDULED: <2026-10-30 Fri 16:55-18:55>
     (when (file-exists-p temp-file) (delete-file temp-file))))
 
 ;; ============================================================================
+;; TEST 36: 4-Segment Clock-Aware Allocation Bar & Dynamic Reserve Reduction
+;; ============================================================================
+(message "\n--- TEST 36: 4-Segment Clock-Aware Allocation Bar & Dynamic Reserve Reduction ---")
+
+(let* ((temp-file (make-temp-file "test-alloc-clocked-" nil ".org"))
+       (buf (find-file-noselect temp-file))
+       (hud-buf (get-buffer-create "*Org Focus HUD*")))
+  (unwind-protect
+      (with-current-buffer buf
+        (org-mode)
+        (insert "* IN-PROGRESS Captures\n"
+                "SCHEDULED: <2026-10-30 Fri 16:55-18:55>\n"
+                ":PROPERTIES:\n"
+                ":Effort:   2:00\n"
+                ":END:\n"
+                ":LOGBOOK:\n"
+                ":END:\n"
+                "  - [X] i94 record number [10m] [clocked: 14m]\n"
+                "  - [ ] fill job and salary details [20m]\n"
+                "  - [-] marriage certificate [clocked: 9m]\n")
+        (save-buffer)
+        (let ((m (progn (goto-char (point-min)) (point-marker)))
+              (mock-clocked 53))
+          (let ((org-focus-hud-clocked-time-function (lambda (_marker) mock-clocked)))
+            (with-current-buffer hud-buf
+              (org-focus-hud-mode)
+              (setq org-focus-hud--target-marker m)
+              (org-focus-hud-refresh)
+              ;; 36.1 Verify 4-segment breakdown: 10m Done · 43m Clocked · 20m Left · 47m Reserve / 2h
+              (let ((hud-str (buffer-string)))
+                (assert-true (string-match-p "10m Done · 43m Clocked · 20m Left · 47m Reserve / 2h" hud-str)
+                             "Test 36.1a: 4-segment allocation ledger shows 10m Done, 43m Clocked, 20m Left, 47m Reserve")
+                (assert-true (string-match-p "ALLOC: \\[█+▒+░+·+\\]" hud-str)
+                             "Test 36.1b: Bar renders all 4 visual segments (█ Done, ▒ Clocked, ░ Left, · Reserve)"))
+
+              ;; 36.2 Advancing main-task clock by 10m (53m -> 63m) directly reduces Reserve (47m -> 37m)
+              (setq mock-clocked 63)
+              (org-focus-hud-refresh)
+              (let ((hud-str (buffer-string)))
+                (assert-true (string-match-p "10m Done · 53m Clocked · 20m Left · 37m Reserve / 2h" hud-str)
+                             "Test 36.2: Clocking +10m on main task increases Clocked to 53m and reduces Reserve to 37m"))
+
+              ;; 36.3 Focusing estimated item ([-] fill job [20m]) with 5m elapsed deducts from Left without double-counting against Reserve
+              (with-current-buffer buf
+                (goto-char (point-min))
+                (re-search-forward "fill job and salary details")
+                (beginning-of-line)
+                (when (re-search-forward "\\[ \\]" (line-end-position) t)
+                  (replace-match "[-]"))
+                (when (re-search-forward "\\[20m\\]" (line-end-position) t)
+                  (replace-match "[20m] [clocked: 5m]"))
+                (save-buffer))
+              (setq mock-clocked 58) ;; 53m + 5m spent on fill job [20m]
+              (org-focus-hud-refresh)
+              (let ((hud-str (buffer-string)))
+                (assert-true (string-match-p "10m Done · 48m Clocked · 15m Left · 47m Reserve / 2h" hud-str)
+                             "Test 36.3: 5m elapsed on active [-] 20m item reduces Left to 15m while keeping Reserve at 47m"))))))
+    (when (buffer-live-p hud-buf) (kill-buffer hud-buf))
+    (when (buffer-live-p buf) (kill-buffer buf))
+    (when (file-exists-p temp-file) (delete-file temp-file))))
+
+;; ============================================================================
 (if (> test-failures 0)
     (progn
       (message "\n==============================================")
