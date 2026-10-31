@@ -2,3 +2,6 @@
 *.elc
 .claude/
 .vscode/
+graphify-out/
+.graphifyrc
+

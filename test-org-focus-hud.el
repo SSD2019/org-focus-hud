@@ -1842,6 +1842,107 @@ SCHEDULED: <2026-10-30 Fri 16:55-18:55>
     (when (file-exists-p temp-file) (delete-file temp-file))))
 
 ;; ============================================================================
+;; TEST 35: Edge-Case Bug Fixes (Extend Default Effort, Reopen Isolation, TAB/S-TAB, Ordered Bullets, Resolver & Wait)
+;; ============================================================================
+(message "\n--- TEST 35: Edge-Case Bug Fixes ---")
+
+(let* ((temp-file (make-temp-file "test-edge-bugs-" nil ".org"))
+       (buf (find-file-noselect temp-file))
+       (hud-buf (get-buffer-create "*Org Focus HUD*")))
+  (unwind-protect
+      (with-current-buffer buf
+        (org-mode)
+        (insert "* TODO Default Effort Task\n"
+                ":LOGBOOK:\n:END:\n"
+                "  1. Ordered item one\n"
+                "  2. [ ] Item two [20m]\n"
+                "  3. [X] Item three [15m]\n"
+                "** TODO Child Subtask\n"
+                ":LOGBOOK:\n:END:\n")
+        (save-buffer)
+        (let ((m (progn (goto-char (point-min)) (point-marker))))
+          (with-current-buffer hud-buf
+            (org-focus-hud-mode)
+            (setq org-focus-hud--target-marker m)
+            (org-focus-hud-refresh)
+
+            ;; 35.1 Extending task without :Effort: adds to default effort (30 + 15 = 45m)
+            (org-focus-hud-extend 15)
+            (assert-equal (org-focus-hud--get-effort m) 45
+                          "Test 35.1: Extending task without :Effort: adds 15m to 30m default -> 45m")
+
+            ;; 35.2 Focusing plain numbered bullet ("1. Ordered item one") via 'f' inserts [-]
+            (goto-char (point-min))
+            (search-forward "Ordered item one")
+            (beginning-of-line)
+            (org-focus-hud-focus-checklist)
+            (let ((file-str (with-current-buffer buf (buffer-string))))
+              (assert-true (string-match-p "1\\. \\[-\\] Ordered item one" file-str)
+                           "Test 35.2: Focusing numbered bullet inserts [-] cleanly"))
+
+            ;; 35.3 Reopening [X] item does NOT wipe active timer of another [-] item
+            (let ((key (org-focus-hud--get-active-key m)))
+              (assert-true (gethash key org-focus-hud--active-checklist-table)
+                           "Test 35.3a: Active item timer present before reopening [X] item")
+              (goto-char (point-min))
+              (search-forward "Item three")
+              (beginning-of-line)
+              (org-focus-hud-toggle-checklist)
+              (assert-true (gethash key org-focus-hud--active-checklist-table)
+                           "Test 35.3b: Active item timer preserved after reopening another [X] item"))
+
+            ;; 35.4 TAB / S-TAB cycle strictly between checklist items (never stopping on borders or sub-lines)
+            (goto-char (point-min))
+            (org-focus-hud-next-checklist)
+            (assert-true (string-match-p "Ordered item one" (thing-at-point 'line t))
+                         "Test 35.4a: First TAB lands on item 1")
+            (org-focus-hud-next-checklist)
+            (assert-true (string-match-p "Item two" (thing-at-point 'line t))
+                         "Test 35.4b: Second TAB skips active sub-line and lands on item 2")
+            (org-focus-hud-next-checklist)
+            (assert-true (string-match-p "Item three" (thing-at-point 'line t))
+                         "Test 35.4c: Third TAB lands on item 3")
+            (org-focus-hud-next-checklist)
+            (assert-true (string-match-p "Ordered item one" (thing-at-point 'line t))
+                         "Test 35.4d: Fourth TAB wraps directly to item 1 without stopping on box border")
+            (org-focus-hud-prev-checklist)
+            (assert-true (string-match-p "Item three" (thing-at-point 'line t))
+                         "Test 35.4e: S-TAB from item 1 wraps directly to item 3")
+            (org-focus-hud-prev-checklist)
+            (assert-true (string-match-p "Item two" (thing-at-point 'line t))
+                         "Test 35.4f: S-TAB from item 3 lands on item 2")
+            (org-focus-hud-prev-checklist)
+            (assert-true (string-match-p "Ordered item one" (thing-at-point 'line t))
+                         "Test 35.4g: S-TAB from item 2 lands on item 1 main line (not sub-line)")
+
+            ;; 35.5 Custom org-focus-hud-task-resolver-function is honored
+            (let ((org-focus-hud-task-resolver-function (lambda () m)))
+              (let ((info (org-focus-hud--resolve-task nil)))
+                (assert-equal (plist-get info :title) "Default Effort Task"
+                              "Test 35.5: org-focus-hud-task-resolver-function resolves task"))))
+
+          ;; 35.6 org-focus-hud-wait logs into parent :LOGBOOK:, not child, and supports :title in today-tasks
+          (with-current-buffer hud-buf
+            (let ((org-focus-hud-auto-clock-in-on-advance nil))
+              (org-focus-hud-wait "Blocked on external review" nil)))
+          (with-current-buffer buf
+            (let ((parent-notes (org-focus-hud--get-notes m))
+                  (m-child (save-excursion
+                             (goto-char (point-min))
+                             (re-search-forward "Child Subtask")
+                             (org-back-to-heading t)
+                             (point-marker))))
+              (assert-equal (length parent-notes) 1
+                            "Test 35.6: WAITING note logged on parent task")
+              (assert-equal (length (org-focus-hud--get-notes m-child)) 0
+                            "Test 35.6: Child subtask LOGBOOK untouched")))))
+    (when (and (fboundp 'org-clock-is-active) (org-clock-is-active))
+      (org-clock-out nil t))
+    (when (buffer-live-p hud-buf) (kill-buffer hud-buf))
+    (when (buffer-live-p buf) (kill-buffer buf))
+    (when (file-exists-p temp-file) (delete-file temp-file))))
+
+;; ============================================================================
 (if (> test-failures 0)
     (progn
       (message "\n==============================================")

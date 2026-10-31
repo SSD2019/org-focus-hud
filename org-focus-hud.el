@@ -1005,6 +1005,12 @@ Returns a plist with task details or nil if no active task found."
             (org-with-point-at override-marker
               (org-back-to-heading t)
               (point-marker)))
+           ((and (bound-and-true-p org-focus-hud-task-resolver-function)
+                 (let ((m (funcall org-focus-hud-task-resolver-function)))
+                   (when (and m (markerp m) (marker-buffer m))
+                     (org-with-point-at m
+                       (org-back-to-heading t)
+                       (point-marker))))))
            ((and (fboundp 'org-clock-is-active) (org-clock-is-active)
                  (boundp 'org-clock-marker) (markerp org-clock-marker) (marker-buffer org-clock-marker))
             (org-with-point-at org-clock-marker
@@ -1761,26 +1767,29 @@ Returns a plist with task details or nil if no active task found."
                           (concat (propertize "[k]" 'face 'org-focus-hud-key-face) " + Checklist item")
                           (concat (propertize "[RET]" 'face 'org-focus-hud-key-face) " Toggle checklist item [ ] ↔ [X]")))
           (insert (format "  %-35s  %-42s\n"
-                          (concat (propertize "[e]" 'face 'org-focus-hud-key-face) " Edit item / estimate")
+                          (concat (propertize "[f]" 'face 'org-focus-hud-key-face) " Focus item ([-] ⏱️)")
+                          (concat (propertize "[e]" 'face 'org-focus-hud-key-face) "   Edit item / estimate")))
+          (insert (format "  %-35s  %-42s\n"
+                          (concat (propertize "[l]" 'face 'org-focus-hud-key-face) " + Log Work Done ([timestamp])")
                           (concat (propertize "[d]" 'face 'org-focus-hud-key-face) "   Mark DONE & Advance")))
           (insert (format "  %-35s  %-42s\n"
                           (concat (propertize "[n]" 'face 'org-focus-hud-key-face) " + Quick Note")
-                          (concat (propertize "[d]" 'face 'org-focus-hud-key-face) "   Mark DONE & Advance")))
-          (insert (format "  %-35s  %-42s\n"
-                          (concat (propertize "[s]" 'face 'org-focus-hud-key-face) " + Child Subtask")
                           (concat (propertize "[w]" 'face 'org-focus-hud-key-face) "   Wait on this & Advance")))
           (insert (format "  %-35s  %-42s\n"
-                          (concat (propertize "[a]" 'face 'org-focus-hud-key-face) " + Sibling Task (after this)")
+                          (concat (propertize "[s]" 'face 'org-focus-hud-key-face) " + Child Subtask")
                           (concat (propertize "[+]" 'face 'org-focus-hud-key-face) "   Extend +15m")))
           (insert (format "  %-35s  %-42s\n"
-                          (concat (propertize "[o]" 'face 'org-focus-hud-key-face) " Open in Other Window")
+                          (concat (propertize "[a]" 'face 'org-focus-hud-key-face) " + Sibling Task (after this)")
                           (concat (propertize "[p]" 'face 'org-focus-hud-key-face) "   Pause / Resume Clock")))
           (insert (format "  %-35s  %-42s\n"
-                          (concat (propertize "[O]" 'face 'org-focus-hud-key-face) " Jump to Org File")
+                          (concat (propertize "[o]" 'face 'org-focus-hud-key-face) " Open in Other Window")
                           (concat (propertize "[q]" 'face 'org-focus-hud-key-face) "   Minimize HUD")))
           (insert (format "  %-35s  %-42s\n"
-                          (concat (propertize "[c]" 'face 'org-focus-hud-key-face) " Clock into today's task")
-                          (concat (propertize "[?]" 'face 'org-focus-hud-key-face) "   Toggle shortcuts help"))))
+                          (concat (propertize "[O]" 'face 'org-focus-hud-key-face) " Jump to Org File")
+                          (concat (propertize "[c]" 'face 'org-focus-hud-key-face) "   Clock into today's task")))
+          (insert (format "  %-35s  %-42s\n"
+                          (concat (propertize "[?]" 'face 'org-focus-hud-key-face) " Toggle shortcuts help")
+                          "")))
       (insert (format "  %s  Show all shortcuts\n"
                       (propertize "[?]" 'face 'org-focus-hud-key-face))))))
 
@@ -1888,7 +1897,17 @@ to :LOGBOOK: without intrusive prompts. If point is on a plain bullet, adds [ ].
                          (arg
                           (if (string-match-p "[Xx]" cur-st)
                               (replace-match (concat prefix "[ ]"))
-                            (replace-match (concat prefix "[X]"))))
+                            (replace-match (concat prefix "[X]"))
+                            (when (string= cur-st "-")
+                              (let* ((active-data (when key (gethash key org-focus-hud--active-checklist-table)))
+                                     (start-clock (when active-data (plist-get active-data :start-clock)))
+                                     (cur-clock (org-focus-hud--get-clocked-time m))
+                                     (session-elapsed (if start-clock (max 0 (- cur-clock start-clock)) 0))
+                                     (prev-clocked (or (plist-get cur-item :clocked-mins) 0))
+                                     (total-elapsed (+ prev-clocked session-elapsed)))
+                                (when (> total-elapsed 0)
+                                  (org-focus-hud--update-item-clocked m pos total-elapsed))
+                                (when key (remhash key org-focus-hud--active-checklist-table))))))
                          ;; [ ] → [-] (Start active focus)
                          ((string= cur-st " ")
                           (replace-match (concat prefix "[-]"))
@@ -1933,7 +1952,8 @@ to :LOGBOOK: without intrusive prompts. If point is on a plain bullet, adds [ ].
                          ;; [-] → [X] (Complete & auto-log milestone)
                          ((string= cur-st "-")
                           (replace-match (concat prefix "[X]"))
-                          (let* ((active-data (when key (gethash key org-focus-hud--active-checklist-table)))
+                          (let* ((item-m (copy-marker (line-beginning-position)))
+                                 (active-data (when key (gethash key org-focus-hud--active-checklist-table)))
                                  (start-clock (when active-data (plist-get active-data :start-clock)))
                                  (cur-clock (org-focus-hud--get-clocked-time m))
                                  (session-elapsed (if start-clock (max 0 (- cur-clock start-clock)) 0))
@@ -1950,16 +1970,26 @@ to :LOGBOOK: without intrusive prompts. If point is on a plain bullet, adds [ ].
                             (when (> final-elapsed 0)
                               (org-focus-hud--update-item-clocked m pos final-elapsed))
                             (org-focus-hud--log-work-silent m log-msg)
+                            (setq new-item-pos
+                                  (save-excursion
+                                    (goto-char item-m)
+                                    (beginning-of-line)
+                                    (if (re-search-forward "\\[[ Xx-]\\]" (line-end-position) t)
+                                        (match-beginning 0)
+                                      pos)))
+                            (set-marker item-m nil)
                             (when key (remhash key org-focus-hud--active-checklist-table))
                             (message "Completed: %s (%s). Milestone logged." full-title dur-str)))
                          ;; [X] → [ ] (Reopen)
                          (t
                           (replace-match (concat prefix "[ ]"))
-                          (when key (remhash key org-focus-hud--active-checklist-table))
+                          (let ((active-data (when key (gethash key org-focus-hud--active-checklist-table))))
+                            (when (and active-data (equal (plist-get active-data :pos) pos))
+                              (remhash key org-focus-hud--active-checklist-table)))
                           (message "Reopened: %s" (or (plist-get cur-item :clean-text) "Item")))))
                     ;; Plain bullet: add [ ]
                     (if (not has-box)
-                        (if (looking-at "^\\([ \t]*[-+*]\\)[ \t]+")
+                        (if (looking-at "^\\([ \t]*\\(?:[-+*]\\|\\(?:[0-9]+\\|[A-Za-z]\\)[.)]\\)\\)[ \t]+")
                             (replace-match "\\1 [ ] ")
                           (org-toggle-checkbox '(4)))
                       (org-toggle-checkbox)))
@@ -2054,7 +2084,7 @@ If the item is already [-], pauses it back to [ ]. Clears active state from othe
                              org-focus-hud--active-checklist-table))
                   (message "Active focus: %s (Clocked in & Timer started)" (or (plist-get cur-item :clean-text) "Item"))))
             (if (not has-box)
-                (if (looking-at "^\\([ \t]*[-+*]\\)[ \t]+")
+                (if (looking-at "^\\([ \t]*\\(?:[-+*]\\|\\(?:[0-9]+\\|[A-Za-z]\\)[.)]\\)\\)[ \t]+")
                     (let ((item-m (copy-marker (line-beginning-position))))
                       (replace-match "\\1 [-] ")
                       (save-match-data
@@ -2630,22 +2660,46 @@ displacing or modifying any intervening node body text or images."
 (defun org-focus-hud-next-checklist ()
   "Move point to the next checklist item in the Focus HUD."
   (interactive)
-  (let ((pos (next-single-property-change (point) 'focus-check-pos)))
-    (if pos
-        (goto-char pos)
-      (goto-char (point-min))
-      (let ((p2 (next-single-property-change (point) 'focus-check-pos)))
-        (when p2 (goto-char p2))))))
+  (let ((cur-prop (get-text-property (point) 'focus-check-pos))
+        (pos (point))
+        (found nil))
+    (while (and (not found)
+                (setq pos (next-single-property-change pos 'focus-check-pos)))
+      (let ((prop (get-text-property pos 'focus-check-pos)))
+        (when (and prop (not (equal prop cur-prop)))
+          (setq found pos))))
+    (unless found
+      (setq pos (point-min))
+      (if (get-text-property pos 'focus-check-pos)
+          (setq found pos)
+        (while (and (not found)
+                    (setq pos (next-single-property-change pos 'focus-check-pos)))
+          (when (get-text-property pos 'focus-check-pos)
+            (setq found pos)))))
+    (when found
+      (goto-char found)
+      (beginning-of-line))))
 
 (defun org-focus-hud-prev-checklist ()
   "Move point to the previous checklist item in the Focus HUD."
   (interactive)
-  (let ((pos (previous-single-property-change (point) 'focus-check-pos)))
-    (if pos
-        (goto-char pos)
-      (goto-char (point-max))
-      (let ((p2 (previous-single-property-change (point) 'focus-check-pos)))
-        (when p2 (goto-char p2))))))
+  (let ((cur-prop (get-text-property (point) 'focus-check-pos))
+        (pos (point))
+        (found nil))
+    (while (and (not found)
+                (setq pos (previous-single-property-change pos 'focus-check-pos)))
+      (let ((prop (get-text-property pos 'focus-check-pos)))
+        (when (and prop (not (equal prop cur-prop)))
+          (setq found pos))))
+    (unless found
+      (setq pos (point-max))
+      (while (and (not found)
+                  (setq pos (previous-single-property-change pos 'focus-check-pos)))
+        (when (get-text-property pos 'focus-check-pos)
+          (setq found pos))))
+    (when found
+      (goto-char found)
+      (beginning-of-line))))
 
 (defun org-focus-hud-add-subtask (title &optional effort)
   "Add a child subtask with TITLE and optional EFFORT under the current task."
@@ -2720,7 +2774,7 @@ With optional prefix ARG (`C-u'), bypasses confirmation when `org-focus-hud-conf
         (org-todo "DONE")
         (when (org-focus-hud--task-clocked-p m)
           (org-clock-out nil t))
-        (when (buffer-file-name) (save-buffer)))
+        (when (buffer-file-name (buffer-base-buffer)) (save-buffer)))
       (run-hooks 'org-focus-hud-on-done-hook)
       (when (fboundp 'org-auto-scheduler--on-todo-state-change)
         (let ((org-state "DONE"))
@@ -2734,12 +2788,15 @@ With optional prefix ARG (`C-u'), bypasses confirmation when `org-focus-hud-conf
                          (not (equal (plist-get tk :marker) m)))
                 (setq next-task tk)))
             (if next-task
-                (let ((nm (plist-get next-task :marker)))
+                (let ((nm (plist-get next-task :marker))
+                      (next-title (or (plist-get next-task :headline)
+                                      (plist-get next-task :title)
+                                      "Untitled")))
                   (org-with-point-at nm
                     (org-clock-in))
                   (setq org-focus-hud--target-marker nm)
                   (org-focus-hud-refresh)
-                  (message "Marked DONE. Advanced and clocked into: %s" (plist-get next-task :headline)))
+                  (message "Marked DONE. Advanced and clocked into: %s" next-title))
               (setq org-focus-hud--target-marker nil)
               (org-focus-hud-refresh)
               (message "Task DONE! All scheduled tasks for today completed! 🎉")))
@@ -2765,10 +2822,22 @@ Clocks out of current task and auto-advances/clocks into the next scheduled task
         (m org-focus-hud--target-marker))
     (unless (and m (markerp m) (marker-buffer m))
       (user-error "No active task in Focus HUD"))
-    (let* ((waiting-state (or (car org-focus-hud-waiting-states) "WAITING")))
+    (let* ((waiting-state (or (cl-find-if (lambda (s)
+                                            (and (boundp 'org-todo-keywords-1)
+                                                 (member s org-todo-keywords-1)))
+                                          org-focus-hud-waiting-states)
+                              (car org-focus-hud-waiting-states)
+                              "WAITING")))
       (org-with-point-at m
         ;; Change TODO state to WAITING (hook clocks out and strips time)
-        (org-todo waiting-state)
+        (if (and (boundp 'org-todo-keywords-1)
+                 (member waiting-state org-todo-keywords-1))
+            (org-todo waiting-state)
+          (let ((org-todo-keywords-1 (cons waiting-state (bound-and-true-p org-todo-keywords-1)))
+                (org-not-done-keywords (cons waiting-state (bound-and-true-p org-not-done-keywords)))
+                (org-todo-regexp (concat "\\(" (regexp-quote waiting-state) "\\|"
+                                         (or (bound-and-true-p org-todo-regexp) "TODO\\|DONE") "\\)")))
+            (ignore-errors (org-todo waiting-state))))
         ;; If tickler provided, set scheduled date
         (when (and tickler-date (not (string-empty-p (string-trim tickler-date))))
           (let ((target-day (if (>= (length tickler-date) 10) (substring tickler-date 0 10) tickler-date)))
@@ -2778,20 +2847,28 @@ Clocks out of current task and auto-advances/clocks into the next scheduled task
           (let ((ts (format-time-string "%H:%M")))
             (save-excursion
               (goto-char (marker-position m))
-              (let ((task-end (save-excursion (or (outline-next-heading) (point-max)))))
-                (if (re-search-forward ":LOGBOOK:" task-end t)
+              (org-back-to-heading t)
+              (let* ((body-end (save-excursion
+                                 (or (and (org-goto-first-child) (point))
+                                     (and (outline-next-heading) (point))
+                                     (point-max))))
+                     (meta-end (save-excursion
+                                 (org-back-to-heading t)
+                                 (org-end-of-meta-data t)
+                                 (min (point) body-end))))
+                (if (re-search-forward "^[ \t]*:LOGBOOK:[ \t]*$" body-end t)
                     (progn
-                      (if (re-search-forward ":END:" task-end t)
+                      (if (re-search-forward "^[ \t]*:END:[ \t]*$" body-end t)
                           (goto-char (match-beginning 0))
-                        (goto-char task-end))
+                        (goto-char body-end))
                       (insert (format "  - [%s] WAITING: %s\n" ts (string-trim note))))
-                  (org-end-of-meta-data t)
+                  (goto-char meta-end)
                   (unless (bolp) (insert "\n"))
                   (insert (format "  - [%s] WAITING: %s\n" ts (string-trim note))))))))
         ;; Ensure clocked out
         (when (org-focus-hud--task-clocked-p m)
           (org-clock-out nil t))
-        (when (buffer-file-name) (save-buffer)))
+        (when (buffer-file-name (buffer-base-buffer)) (save-buffer)))
       ;; Advance to next task if configured
       (if org-focus-hud-auto-clock-in-on-advance
           (let* ((today-tasks (ignore-errors (org-focus-hud--get-today-tasks)))
@@ -2803,12 +2880,15 @@ Clocks out of current task and auto-advances/clocks into the next scheduled task
                          (not (equal (plist-get tk :marker) m)))
                 (setq next-task tk)))
             (if next-task
-                (let ((nm (plist-get next-task :marker)))
+                (let ((nm (plist-get next-task :marker))
+                      (next-title (or (plist-get next-task :headline)
+                                      (plist-get next-task :title)
+                                      "Untitled")))
                   (org-with-point-at nm
                     (org-clock-in))
                   (setq org-focus-hud--target-marker nm)
                   (org-focus-hud-refresh)
-                  (message "Moved to WAITING. Advanced and clocked into: %s" (plist-get next-task :headline)))
+                  (message "Moved to WAITING. Advanced and clocked into: %s" next-title))
               (setq org-focus-hud--target-marker nil)
               (org-focus-hud-refresh)
               (message "Task moved to WAITING. No more scheduled tasks for today.")))
@@ -2830,12 +2910,15 @@ Clocks out of current task and auto-advances/clocks into the next scheduled task
         (org-auto-scheduler-extend-current-task mins))
        (t
         (org-with-point-at m
-          (let* ((cur (or (ignore-errors (round (org-duration-to-minutes (org-entry-get nil "Effort")))) 0))
+          (let* ((cur (or (ignore-errors (org-focus-hud--get-effort m))
+                          org-focus-hud-default-effort
+                          30))
                  (new (+ cur mins))
                  (h (/ new 60))
                  (rem (% new 60))
                  (str (format "%d:%02d" h rem)))
             (org-entry-put nil "Effort" str)
+            (when (buffer-file-name (buffer-base-buffer)) (save-buffer))
             (message "Extended task effort by %dm (new effort: %s)" mins str))))))
     (org-focus-hud-refresh)))
 
@@ -2977,19 +3060,27 @@ to window size; manual toggling is rarely needed."
     (if (null active-tasks)
         (user-error "No pending scheduled tasks found for today")
       (let* ((choices (mapcar (lambda (tk)
-                                (cons (format "%s [%s]" (plist-get tk :headline)
-                                              (format-time-string "%H:%M" (plist-get tk :start)))
-                                      tk))
+                                (let ((title (or (plist-get tk :headline)
+                                                 (plist-get tk :title)
+                                                 "Untitled"))
+                                      (start (plist-get tk :start)))
+                                  (cons (if start
+                                            (format "%s [%s]" title (format-time-string "%H:%M" start))
+                                          title)
+                                        tk)))
                               active-tasks))
              (selection (completing-read "Clock into task: " (mapcar #'car choices) nil t))
              (tk (cdr (assoc selection choices))))
         (when tk
-          (let ((m (plist-get tk :marker)))
+          (let ((m (plist-get tk :marker))
+                (title (or (plist-get tk :headline)
+                           (plist-get tk :title)
+                           "Untitled")))
             (org-with-point-at m
               (org-clock-in))
             (setq org-focus-hud--target-marker m)
             (org-focus-hud-refresh)
-            (message "Clocked into: %s" (plist-get tk :headline))))))))
+            (message "Clocked into: %s" title)))))))
 
 (defvar org-focus-hud-mode-map
   (let ((map (make-sparse-keymap)))
