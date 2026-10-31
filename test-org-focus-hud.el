@@ -1779,6 +1779,69 @@ CLOCK: [2026-10-21 Wed 16:42]--[2026-10-21 Wed 20:41] =>  3:59
     (when (file-exists-p temp-file) (delete-file temp-file))))
 
 ;; ============================================================================
+;; TEST 34: Checklist Focus ('f') Clock-In Shift & Sub-Line Clock-Out Preservation
+;; ============================================================================
+(message "\n--- TEST 34: Checklist Focus ('f') Clock-In Shift & Sub-Line Clock-Out ---")
+
+(let* ((temp-file (make-temp-file "test-focus-subline-clockout-" nil ".org"))
+       (buf (find-file-noselect temp-file))
+       (hud-buf (get-buffer-create "*Org Focus HUD*")))
+  (unwind-protect
+      (with-current-buffer buf
+        (org-mode)
+        (insert "* IN-PROGRESS apply for h4 today
+SCHEDULED: <2026-10-30 Fri 16:55-18:55>
+:PROPERTIES:
+:Effort:   2:00
+:END:
+:LOGBOOK:
+:END:
+")
+        (save-buffer)
+        (let ((m (progn (goto-char (point-min)) (point-marker))))
+          (with-current-buffer hud-buf
+            (org-focus-hud-mode)
+            (setq org-focus-hud--target-marker m)
+            (org-focus-hud-refresh)
+            ;; 34.1 Add checklist item with inline estimate [10m] -> cursor lands directly on item
+            (goto-char (point-min))
+            (org-focus-hud-add-checklist "i94 record number[10m]")
+            (assert-true (get-text-property (point) 'focus-check-pos)
+                         "Test 34.1: Cursor placed directly on newly added item with [10m] estimate")
+            ;; 34.2 Press 'f' to focus & auto-clock-in when parent task is not clocked in yet
+            ;; Auto-clock-in inserts CLOCK: line into :LOGBOOK: above checklist item, shifting pos
+            (org-focus-hud-focus-checklist)
+            (assert-true (org-focus-hud--task-clocked-p m)
+                         "Test 34.2: Task clocked in via 'f'")
+            ;; Simulate 14 minutes elapsed on the active clock
+            (setq org-clock-start-time (time-subtract (current-time) (* 14 60)))
+            (org-focus-hud-refresh)
+            (let ((hud-str (buffer-string)))
+              (assert-true (string-match-p "14m / 0:10" hud-str)
+                           "Test 34.2: Live elapsed time (14m / 0:10) tracked after clock-in position shift"))
+            ;; 34.3 Move point to the ╰─► ⏱️ progress sub-line and press 'f' to clock out
+            (goto-char (point-min))
+            (search-forward "╰─►")
+            (beginning-of-line)
+            (assert-true (get-text-property (point) 'focus-has-box)
+                         "Test 34.3: Progress sub-line carries focus-has-box property")
+            (org-focus-hud-focus-checklist)
+            ;; Verify item clocked out cleanly to [ ], saved [clocked: 14m], and did NOT duplicate [-]
+            (let ((file-str (with-current-buffer buf (buffer-string)))
+                  (hud-str (buffer-string)))
+              (assert-true (string-match-p "- \\[ \\] i94 record number \\[10m\\] \\[clocked: 14m\\]" file-str)
+                           "Test 34.3: Pressing 'f' on sub-line persisted [clocked: 14m] and reverted to [ ]")
+              (assert-equal (string-match-p "\\[-\\].*\\[-\\]" file-str) nil
+                            "Test 34.3: No duplicate [-] checkboxes inserted")
+              (assert-true (string-match-p "⏱️ 14m/0:10" hud-str)
+                           "Test 34.3: HUD displays preserved ⏱️ 14m/0:10 clocked info on item")))))
+    (when (and (fboundp 'org-clock-is-active) (org-clock-is-active))
+      (org-clock-out nil t))
+    (when (buffer-live-p hud-buf) (kill-buffer hud-buf))
+    (when (buffer-live-p buf) (kill-buffer buf))
+    (when (file-exists-p temp-file) (delete-file temp-file))))
+
+;; ============================================================================
 (if (> test-failures 0)
     (progn
       (message "\n==============================================")
